@@ -192,18 +192,15 @@ def create_llm(deep_think: bool = False, fast_mode: bool = False, model_override
     model = model_override or settings.LLM_MODEL
     
     if fast_mode and not model_override:
-        for m in ["glm-4-flash", "glm-4-air", "glm-4.7-flash"]:
-            if m != model:
-                model = m
-                break
-        logger.info(f"快速模式：使用模型 {model}")
-    elif deep_think and not model_override:
-        deep_think_models = ["glm-4-plus", "glm-4.7", "glm-4-long", "glm-4-air"]
-        for m in deep_think_models:
-            if m != model:
-                model = m
-                break
-        logger.info(f"深度思考模式：尝试使用模型 {model}")
+        # 从 FAST_MODELS 配置中选取快速模型（如当前模型已是快速模型则不切换）
+        if model not in FAST_MODELS and FAST_MODELS:
+            fast_model = next(iter(FAST_MODELS))
+            logger.info(f"快速模式：模型从 {model} 切换到 {fast_model}")
+            model = fast_model
+        else:
+            logger.info(f"快速模式：当前模型 {model} 已是快速模型，无需切换")
+    # deep_think 不再切换模型：用户已主动选择模型，深度思考只需调整 temperature 和 max_tokens
+    # 旧代码会强制切换到已失效的 glm-4-plus 等模型，导致 API 调用失败
 
     # 决定使用主Key还是备用Key（用锁保护并发读写）
     with _primary_key_lock:

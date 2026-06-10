@@ -360,56 +360,81 @@ function renderMyAgents() {
     myAgents.forEach(agent => {
         const item = document.createElement('div');
         item.className = `agent-item${agent.id === currentAgentId ? ' active' : ''}`;
-        item.onclick = (e) => {
-            if (e.target.closest('.agent-action-btn')) return;
-            switchToAgent(agent.id);
-            closeSidebarOnMobile();
-        };
+        item.setAttribute('data-agent-id', agent.id);
         const initial = (agent.name && agent.name[0] || '?').toUpperCase();
         item.innerHTML = `
             <div class="agent-item-icon">${initial}</div>
             <div class="agent-item-info">
                 <div class="agent-item-name">${escapeHtml(agent.name)}</div>
             </div>
-            <button class="agent-action-btn new-chat" data-agent-id="${agent.id}" title="新建对话" aria-label="新建对话">➕</button>
+            <button class="agent-action-btn new-chat" data-action="new-chat" data-agent-id="${agent.id}" title="新建对话" aria-label="新建对话">➕</button>
         `;
         list.appendChild(item);
-        // 使用 addEventListener 替代 inline onclick，避免 innerHTML 解析问题
-        const btn = item.querySelector('.agent-action-btn.new-chat');
-        if (btn) {
-            btn.addEventListener('click', function(e) {
-                e.stopPropagation();
-                e.preventDefault();
-                const aid = this.getAttribute('data-agent-id');
-                if (aid) createNewChatForAgent(aid);
-            });
-        }
     });
+
+    // 事件委托：在列表容器上统一处理点击，避免 innerHTML 后事件丢失
+    list.onclick = function(e) {
+        const newChatBtn = e.target.closest('[data-action="new-chat"]');
+        if (newChatBtn) {
+            e.stopPropagation();
+            e.preventDefault();
+            const aid = newChatBtn.getAttribute('data-agent-id');
+            console.log('[事件委托] 新建对话按钮点击, agentId=', aid);
+            if (aid) {
+                createNewChatForAgent(aid);
+            }
+            return;
+        }
+        const agentItem = e.target.closest('.agent-item');
+        if (agentItem) {
+            const aid = agentItem.getAttribute('data-agent-id');
+            if (aid) {
+                switchToAgent(aid);
+                closeSidebarOnMobile();
+            }
+        }
+    };
 }
 
 // ===== Agent Edit (disabled - prompt no longer user-editable) =====
 let editingAgentId = null;
 
 async function createNewChatForAgent(agentId) {
-    console.log('[新建对话] 点击按钮, agentId=', agentId, 'currentUser=', currentUser);
-    if (!currentUser) { console.warn('[新建对话] 未登录，跳过'); return; }
-    // Switch to this agent first
-    const prevAgentId = currentAgentId;
+    console.log('[新建对话] 开始, agentId=', agentId, 'currentUser=', currentUser, 'currentMode=', currentMode);
+    if (!currentUser) {
+        console.warn('[新建对话] 未登录，跳过');
+        showToast('请先登录');
+        return;
+    }
+
+    // 切换到该智能体
     currentAgentId = agentId;
     currentMode = 'agent';
     localStorage.setItem('chatMode', 'agent');
-    document.getElementById('modeChat').classList.toggle('active', false);
-    document.getElementById('modeAgent').classList.toggle('active', true);
+
+    // 更新模式切换按钮样式
+    const modeChatBtn = document.getElementById('modeChat');
+    const modeAgentBtn = document.getElementById('modeAgent');
+    if (modeChatBtn) modeChatBtn.classList.toggle('active', false);
+    if (modeAgentBtn) modeAgentBtn.classList.toggle('active', true);
+
     try {
         const agent = myAgents.find(a => a.id === agentId);
         const chatTitle = agent ? agent.name : '新对话';
-        console.log('[新建对话] 创建会话, title=', chatTitle);
-        const resp = await fetch(`/api/v1/chats?username=${encodeURIComponent(currentUser)}&title=${encodeURIComponent(chatTitle)}&mode=agent&agent_id=${encodeURIComponent(agentId)}`, { method: 'POST', headers: apiHeaders() });
+        console.log('[新建对话] 发送POST请求, title=', chatTitle, 'agent_id=', agentId);
+
+        const resp = await fetch(`/api/v1/chats?username=${encodeURIComponent(currentUser)}&title=${encodeURIComponent(chatTitle)}&mode=agent&agent_id=${encodeURIComponent(agentId)}`, {
+            method: 'POST',
+            headers: apiHeaders()
+        });
         const data = await resp.json();
-        console.log('[新建对话] API响应:', data);
-        if (data.success) {
+        console.log('[新建对话] API返回:', JSON.stringify(data));
+
+        if (data.success && data.chat) {
             currentChatId = data.chat.chat_id;
             modeChatId['agent'] = currentChatId;
+
+            // 关联智能体
             if (agent) {
                 if (!agent.chat_ids) agent.chat_ids = [];
                 if (!agent.chat_ids.includes(data.chat.chat_id)) agent.chat_ids.push(data.chat.chat_id);
@@ -417,21 +442,49 @@ async function createNewChatForAgent(agentId) {
                 saveAgentActiveChatIds();
                 saveAgents();
             }
+
+            // 刷新聊天列表
             await loadChatList();
+
+            // 清空聊天区域，显示新对话界面
             clearChatUI();
+
+            // 隐藏欢迎页，确保输入框可见
+            const welcomeEl = document.getElementById('welcomeCenter');
+            if (welcomeEl) welcomeEl.style.display = 'none';
+            const chatContent = document.getElementById('chatContent');
+            if (chatContent) chatContent.classList.remove('centered');
+
+            // 刷新智能体列表高亮
             renderMyAgents();
+
+            // 更新标题
+            const titleEl = document.getElementById('chatTitle');
+            if (titleEl && agent) titleEl.textContent = agent.name;
+
+            // 更新知识库按钮
+            updateKbUploadVisibility();
+            updateHeaderKbVisibility();
+
+            // 移动端关闭侧边栏
             closeSidebarOnMobile();
+
             showToast('已创建新对话');
-            // 聚焦输入框，让用户可以直接开始对话
-            const input = document.getElementById('messageInput');
-            if (input) input.focus();
+
+            // 聚焦输入框
+            setTimeout(() => {
+                const input = document.getElementById('messageInput') || document.getElementById('msgInput');
+                if (input) input.focus();
+            }, 100);
+
+            console.log('[新建对话] 完成, chatId=', currentChatId);
         } else {
             console.error('[新建对话] API返回失败:', data);
-            showToast('创建对话失败: ' + (data.message || '未知错误'));
+            showToast('创建对话失败');
         }
     } catch (e) {
         console.error('[新建对话] 异常:', e);
-        showToast('创建对话失败: ' + e.message);
+        showToast('创建对话异常: ' + e.message);
     }
 }
 

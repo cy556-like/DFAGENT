@@ -29,21 +29,43 @@ let _lastSyncedAgentsHash = '';
 
 // ===== Agent Management =====
 // 允许的智能体ID白名单（与后端 storage.py 保持一致）
+// 顺序即侧边栏固定显示顺序，点击等操作不会改变
 const ALLOWED_AGENT_IDS = [
-    'part-design-agent',           // 零部件智能设计助手
-    'simulation-optimization-agent', // 多学科仿真与优化代理
-    'material-selection-agent',     // 材料与轻量化选型顾问
-    'manufacturing-process-agent',  // 制造工艺仿真与工艺卡生成器
-    'ee-design-agent',             // 电子电气设计协同智能体
-    'embedded-software-agent',     // 嵌入式软件与功能安全助手
-    'test-verification-agent',     // 试验设计与智能验证伙伴
-    'dfmea-risk-agent',            // DFMEA与风险分析专家
-    'equipment-production-agent',  // 装备与产线开发智能体
-    'standards-innovation-agent',  // 标准法规与技术创新检索
+    'dfmea-risk-agent',            // 1. DFMEA与风险分析专家
+    'part-design-agent',           // 2. 零部件智能设计助手
+    'simulation-optimization-agent', // 3. 多学科仿真与优化代理
+    'material-selection-agent',     // 4. 材料与轻量化选型顾问
+    'manufacturing-process-agent',  // 5. 制造工艺仿真与工艺卡生成器
+    'ee-design-agent',             // 6. 电子电气设计协同智能体
+    'embedded-software-agent',     // 7. 嵌入式软件与功能安全助手
+    'test-verification-agent',     // 8. 试验设计与智能验证伙伴
+    'equipment-production-agent',  // 9. 装备与产线开发智能体
+    'standards-innovation-agent',  // 10. 标准法规与技术创新检索
 ];
+
+// 按 ALLOWED_AGENT_IDS 定义的顺序排序智能体列表（保证侧边栏顺序永远固定）
+function sortAgentsByFixedOrder(agents) {
+    const orderMap = {};
+    ALLOWED_AGENT_IDS.forEach((id, idx) => { orderMap[id] = idx; });
+    return agents.sort((a, b) => {
+        const oa = orderMap[a.id] !== undefined ? orderMap[a.id] : 9999;
+        const ob = orderMap[b.id] !== undefined ? orderMap[b.id] : 9999;
+        return oa - ob;
+    });
+}
 
 // 每个智能体的欢迎页配置（名称、描述、推荐问题）
 const AGENT_WELCOME_CONFIG = {
+    'dfmea-risk-agent': {
+        name: 'DFMEA与风险分析专家',
+        desc: '引导开展设计/过程失效模式分析，关联历史失效库，自动完成风险优先级评分并推送预防措施',
+        questions: [
+            'DFMEA七步法的流程是什么？',
+            '严重度、频度、探测度怎么评级？',
+            'AP措施优先级如何判定？',
+            '如何关联历史失效案例进行风险分析？'
+        ]
+    },
     'part-design-agent': {
         name: '零部件智能设计助手',
         desc: '辅助参数化建模、结构方案推荐、尺寸链计算与3D标注检查，加速零部件设计',
@@ -145,6 +167,7 @@ const AGENT_WELCOME_CONFIG = {
         ]
     }
 };
+// 注意：AGENT_WELCOME_CONFIG 的键顺序无关，显示顺序由 sortAgentsByFixedOrder 控制
 
 // 获取智能体欢迎页配置（内置+自定义智能体）
 function getAgentWelcomeConfig(agentId) {
@@ -167,6 +190,7 @@ function forceCorrectAgents() {
     existing.forEach(a => { existingMap[a.id] = a; });
 
     const defaults = {
+        'dfmea-risk-agent': { name: 'DFMEA与风险分析专家', task: '引导开展设计/过程失效模式分析，关联历史失效库，自动完成风险优先级评分，并推送预防措施', summary: 'DFMEA与风险分析' },
         'part-design-agent': { name: '零部件智能设计助手', task: '辅助参数化建模、结构方案推荐、尺寸链计算与3D标注检查，加速零部件设计', summary: '零部件设计' },
         'simulation-optimization-agent': { name: '多学科仿真与优化代理', task: '自动驱动结构强度、刚度、NVH、热管理、流体等分析，并进行多目标优化', summary: '仿真与优化' },
         'material-selection-agent': { name: '材料与轻量化选型顾问', task: '基于性能、成本与工艺约束，推荐金属、复合材料或轻量化方案，预估减重效果', summary: '材料与轻量化' },
@@ -174,7 +198,6 @@ function forceCorrectAgents() {
         'ee-design-agent': { name: '电子电气设计协同智能体', task: '协助汽车电子零部件的电路设计检查、信号完整性分析、原理图与PCB布局评审', summary: '电子电气设计' },
         'embedded-software-agent': { name: '嵌入式软件与功能安全助手', task: '自动生成基础代码、进行MISRA-C检查，辅助完成ISO 26262功能安全分析与文档', summary: '嵌入式与功能安全' },
         'test-verification-agent': { name: '试验设计与智能验证伙伴', task: '根据DVP计划推荐试验方案（DOE），实时分析试验数据，自动识别异常并生成验证报告', summary: '试验与验证' },
-        'dfmea-risk-agent': { name: 'DFMEA与风险分析专家', task: '引导开展设计/过程失效模式分析，关联历史失效库，自动完成风险优先级评分，并推送预防措施', summary: 'DFMEA与风险分析' },
         'equipment-production-agent': { name: '装备与产线开发智能体', task: '支持进行非标装备、智能产线及工装的初步方案设计、节拍分析、布局与虚拟调试', summary: '装备与产线' },
         'standards-innovation-agent': { name: '标准法规与技术创新检索', task: '实时查询国内外零部件/装备的标准、法规及认证要求，同时提供专利、论文和TRIZ创新原理推送', summary: '标准法规与技术创新' }
     };
@@ -199,13 +222,13 @@ function forceCorrectAgents() {
 }
 
 function filterAgents(agents) {
-    if (!agents || !Array.isArray(agents)) return forceCorrectAgents();
+    if (!agents || !Array.isArray(agents)) return sortAgentsByFixedOrder(forceCorrectAgents());
     // 保留内置智能体 + 用户动态创建的智能体（agent_ 开头）
     const filtered = agents.filter(a => ALLOWED_AGENT_IDS.includes(a.id) || (a.id && a.id.startsWith('agent_')));
     // 确保内置智能体一定存在
     const hasBuiltIn = ALLOWED_AGENT_IDS.every(id => filtered.some(a => a.id === id));
-    if (!hasBuiltIn) return forceCorrectAgents();
-    return filtered;
+    if (!hasBuiltIn) return sortAgentsByFixedOrder(forceCorrectAgents());
+    return sortAgentsByFixedOrder(filtered);
 }
 
 let myAgents = filterAgents((function() { try { return JSON.parse(localStorage.getItem('forgeAgents') || 'null'); } catch(e) { return null; } })());
@@ -436,7 +459,7 @@ function deleteAgent(agentId) {
         .then(data => console.log('[KB删除]', data))
         .catch(e => console.warn('[KB删除失败]', e));
     
-    myAgents = myAgents.filter(a => a.id !== agentId);
+    myAgents = sortAgentsByFixedOrder(myAgents.filter(a => a.id !== agentId));
     saveAgents();
     
     if (currentAgentId === agentId) {

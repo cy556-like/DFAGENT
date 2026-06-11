@@ -27,19 +27,40 @@ def _user_file(username: str) -> str:
     return os.path.join(AGENTS_DIR, f"{username}.json")
 
 
-# 允许的智能体ID白名单
+# 允许的智能体ID白名单（顺序与前端 ALLOWED_AGENT_IDS 保持一致）
+# 顺序即侧边栏固定显示顺序：DFMEA排第一
 ALLOWED_AGENT_IDS = {
-    'part-design-agent',           # 零部件智能设计助手
-    'simulation-optimization-agent', # 多学科仿真与优化代理
-    'material-selection-agent',     # 材料与轻量化选型顾问
-    'manufacturing-process-agent',  # 制造工艺仿真与工艺卡生成器
-    'ee-design-agent',             # 电子电气设计协同智能体
-    'embedded-software-agent',     # 嵌入式软件与功能安全助手
-    'test-verification-agent',     # 试验设计与智能验证伙伴
-    'dfmea-risk-agent',            # DFMEA与风险分析专家
-    'equipment-production-agent',  # 装备与产线开发智能体
-    'standards-innovation-agent',  # 标准法规与技术创新检索
+    'dfmea-risk-agent',            # 1. DFMEA与风险分析专家
+    'part-design-agent',           # 2. 零部件智能设计助手
+    'simulation-optimization-agent', # 3. 多学科仿真与优化代理
+    'material-selection-agent',     # 4. 材料与轻量化选型顾问
+    'manufacturing-process-agent',  # 5. 制造工艺仿真与工艺卡生成器
+    'ee-design-agent',             # 6. 电子电气设计协同智能体
+    'embedded-software-agent',     # 7. 嵌入式软件与功能安全助手
+    'test-verification-agent',     # 8. 试验设计与智能验证伙伴
+    'equipment-production-agent',  # 9. 装备与产线开发智能体
+    'standards-innovation-agent',  # 10. 标准法规与技术创新检索
 }
+
+# 固定排序顺序列表（与前端 ALLOWED_AGENT_IDS 数组顺序一致）
+AGENT_SORT_ORDER = [
+    'dfmea-risk-agent',
+    'part-design-agent',
+    'simulation-optimization-agent',
+    'material-selection-agent',
+    'manufacturing-process-agent',
+    'ee-design-agent',
+    'embedded-software-agent',
+    'test-verification-agent',
+    'equipment-production-agent',
+    'standards-innovation-agent',
+]
+
+
+def _sort_agents(agents: list) -> list:
+    """按固定顺序排序智能体列表，确保前端侧边栏顺序永远固定"""
+    order_map = {aid: idx for idx, aid in enumerate(AGENT_SORT_ORDER)}
+    return sorted(agents, key=lambda a: order_map.get(a.get("id", ""), 9999))
 
 def load_agents(username: str) -> list:
     """
@@ -57,8 +78,8 @@ def load_agents(username: str) -> list:
             agents = data
         elif isinstance(data, dict) and "agents" in data:
             agents = data["agents"]
-        # 过滤：只保留允许的智能体ID
-        return [a for a in agents if a.get("id") in ALLOWED_AGENT_IDS]
+        # 过滤：只保留允许的智能体ID，并按固定顺序排序
+        return _sort_agents([a for a in agents if a.get("id") in ALLOWED_AGENT_IDS])
     except (json.JSONDecodeError, IOError) as e:
         logger.warning(f"加载智能体数据失败 [{username}]: {e}")
         return []
@@ -145,11 +166,8 @@ def sync_agents(username: str, client_agents: list) -> dict:
             # 仅服务端有：保留
             merged.append(server_agent)
     
-    # 按 created_at 排序
-    merged.sort(key=lambda a: a.get("created_at", 0), reverse=True)
-    
-    # 过滤：只保留允许的智能体ID
-    merged = [a for a in merged if a.get("id") in ALLOWED_AGENT_IDS]
+    # 按 fixed order 排序（而非 created_at，确保前端侧边栏顺序固定）
+    merged = _sort_agents([a for a in merged if a.get("id") in ALLOWED_AGENT_IDS])
     
     # 保存合并结果
     save_agents(username, merged)

@@ -4,6 +4,7 @@
  */
 
 let currentUser = null;
+let userRole = null;
 let authToken = null;
 let selectedFile = null;
 let selectedFileBase64 = null;
@@ -987,7 +988,9 @@ async function doLogin() {
         const data = await resp.json();
         if (data.success) {
             currentUser = username;
+            userRole = data.role || 'user';
             if (data.token) { authToken = data.token; localStorage.setItem('authToken', data.token); }
+            localStorage.setItem('userRole', userRole);
             msgEl.className = 'msg-box success'; msgEl.textContent = '登录成功！';
             setTimeout(async () => {
                 document.getElementById('loginModal').classList.remove('show');
@@ -995,6 +998,10 @@ async function doLogin() {
                 document.body.classList.add('body-chat-mode');
                 document.getElementById('sidebarUsername').textContent = username;
                 document.getElementById('sidebarAvatar').textContent = username[0].toUpperCase();
+                // 显示管理员标识
+                if (userRole === 'admin') {
+                    document.getElementById('sidebarUsername').textContent = username + ' (管理员)';
+                }
                 loadChatList();
                 loadModels();
                 await syncAgentsFromServer(true);  // [#12] 登录时强制同步一次，内部已调用 rebuildChatIdsFromServer（会GET /chats）
@@ -1011,45 +1018,14 @@ async function doLogin() {
 }
 
 async function doRegister() {
-    const username = document.getElementById('regUser').value.trim();
-    const password = document.getElementById('regPass').value.trim();
-    const msgEl = document.getElementById('regMsg');
-    if (!username || !password) { msgEl.className = 'msg-box error'; msgEl.textContent = '请输入用户名和密码'; return; }
-    try {
-        const resp = await fetch('/api/v1/auth/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username, password }) });
-        const data = await resp.json();
-        if (data.success) {
-            msgEl.className = 'msg-box success';
-            msgEl.textContent = data.message || '注册成功！';
-            // Auto-login after successful registration
-            if (data.token) {
-                authToken = data.token;
-                localStorage.setItem('authToken', data.token);
-            }
-            currentUser = username;
-            setTimeout(async () => {
-                document.getElementById('loginModal').classList.remove('show');
-                document.getElementById('chatPage').style.display = 'flex';
-                document.body.classList.add('body-chat-mode');
-                document.getElementById('sidebarUsername').textContent = username;
-                document.getElementById('sidebarAvatar').textContent = username[0].toUpperCase();
-                loadChatList();
-                loadModels();
-                await syncAgentsFromServer(true);  // [#12] 注册后强制同步
-                renderMyAgents();
-                updateKbUploadVisibility();
-                updateHeaderKbVisibility();
-            }, 500);
-        } else {
-            msgEl.className = 'msg-box error';
-            msgEl.textContent = data.message || '注册失败';
-        }
-    } catch (e) { msgEl.className = 'msg-box error'; msgEl.textContent = '网络错误'; }
+    // 注册功能已禁用，新用户只能由管理员在后端创建
+    alert('注册功能已禁用，请联系管理员创建账号');
 }
 
 function doLogout() {
-    currentUser = null; authToken = null; selectedFile = null; currentChatId = null; allChats = []; currentAgentId = null; agentKbUploadMode = false;
+    currentUser = null; userRole = null; authToken = null; selectedFile = null; currentChatId = null; allChats = []; currentAgentId = null; agentKbUploadMode = false;
     localStorage.removeItem('authToken');
+    localStorage.removeItem('userRole');
     // Hide KB page if open
     const kbPage = document.getElementById('kbPage');
     if (kbPage) kbPage.style.display = 'none';

@@ -15,6 +15,8 @@ load_dotenv()
 
 # 可用的 LLM 模型列表
 AVAILABLE_MODELS = [
+    # 豆包 Auto 模式（火山引擎 Coding Plan，自动选模型）
+    {"id": "ark-code-latest", "name": "Doubao-Auto", "desc": "豆包Auto模式，效果+速度智能选择"},
     # DeepSeek 系列（火山引擎）
     {"id": "DeepSeek-V4-Flash", "name": "DeepSeek-V4-Flash", "desc": "DeepSeek快速版，性价比高"},
     # GLM 系列（智谱AI）
@@ -33,12 +35,12 @@ VISION_MODELS = {"glm-4v-plus", "glm-4v", "glm-4v-flash"}
 DEFAULT_VISION_MODEL = "glm-4v-plus"
 
 # 快速模型列表（用于意图路由，加速简单问题的响应）
-FAST_MODELS = {"DeepSeek-V4-Flash"}
+FAST_MODELS = {"DeepSeek-V4-Flash", "ark-code-latest"}
 
-# 火山引擎模型列表（走火山引擎Ark API，包括DeepSeek和豆包）
-VOLCENGINE_MODELS = {"DeepSeek-V4-Flash", "Doubao-Seed-2.0-pro"}
+# 火山引擎模型列表（走火山引擎Ark Coding API，包括豆包Auto/DeepSeek/豆包）
+VOLCENGINE_MODELS = {"ark-code-latest", "DeepSeek-V4-Flash", "Doubao-Seed-2.0-pro"}
 
-# DeepSeek 模型列表（兼容旧代码引用，走火山引擎API）
+# DeepSeek 模型列表（兼容旧代码引用，走火山引擎Coding API）
 DEEPSEEK_MODELS = {"DeepSeek-V4-Flash"}
 
 # 千问模型列表（走阿里云DashScope API）
@@ -62,7 +64,7 @@ class Settings:
 
     # DeepSeek / 豆包 独立配置（火山引擎Ark）
     DEEPSEEK_API_KEY: str = os.getenv("DEEPSEEK_API_KEY", os.getenv("LLM_API_KEY", ""))
-    DEEPSEEK_BASE_URL: str = os.getenv("DEEPSEEK_BASE_URL", "https://ark.cn-beijing.volces.com/api/v3")
+    DEEPSEEK_BASE_URL: str = os.getenv("DEEPSEEK_BASE_URL", "https://ark.cn-beijing.volces.com/api/coding/v3")
 
     # 千问独立配置（阿里云DashScope）
     QWEN_API_KEY: str = os.getenv("QWEN_API_KEY", "")

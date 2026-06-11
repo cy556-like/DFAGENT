@@ -206,7 +206,7 @@ def create_llm(deep_think: bool = False, fast_mode: bool = False, model_override
     
     # [DeepSeek] 检测是否为 DeepSeek 模型，自动切换火山引擎 API
     is_deepseek = model in DEEPSEEK_MODELS
-    # [豆包] 检测是否为火山引擎模型（DeepSeek+豆包），使用火山引擎 API
+    # [豆包] 检测是否为火山引擎模型（豆包Auto/DeepSeek/豆包），使用火山引擎 Coding API
     is_volcengine = model in VOLCENGINE_MODELS
     # [千问] 检测是否为千问模型，使用阿里云 DashScope API
     is_qwen = model in QWEN_MODELS
@@ -216,7 +216,7 @@ def create_llm(deep_think: bool = False, fast_mode: bool = False, model_override
     if is_volcengine and settings.DEEPSEEK_API_KEY:
         api_key = settings.DEEPSEEK_API_KEY
         base_url = settings.DEEPSEEK_BASE_URL
-        logger.info(f"火山引擎模型检测到（{model}），使用火山引擎 API: {base_url}")
+        logger.info(f"火山引擎模型检测到（{model}），使用火山引擎 Coding API: {base_url}")
     elif is_qwen and settings.QWEN_API_KEY:
         api_key = settings.QWEN_API_KEY
         base_url = settings.QWEN_BASE_URL

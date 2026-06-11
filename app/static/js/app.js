@@ -28,29 +28,120 @@ const _SYNC_AGENTS_COOLDOWN = 5000;  // 5秒内不重复同步
 let _lastSyncedAgentsHash = '';
 
 // ===== Agent Management =====
-// 强制只保留2个允许的智能体（内置ID白名单）
-const ALLOWED_AGENT_IDS = ['xf-rd-agent', 'xf-quality-agent'];
+// 允许的智能体ID白名单（与后端 storage.py 保持一致）
+const ALLOWED_AGENT_IDS = [
+    'part-design-agent',           // 零部件智能设计助手
+    'simulation-optimization-agent', // 多学科仿真与优化代理
+    'material-selection-agent',     // 材料与轻量化选型顾问
+    'manufacturing-process-agent',  // 制造工艺仿真与工艺卡生成器
+    'ee-design-agent',             // 电子电气设计协同智能体
+    'embedded-software-agent',     // 嵌入式软件与功能安全助手
+    'test-verification-agent',     // 试验设计与智能验证伙伴
+    'dfmea-risk-agent',            // DFMEA与风险分析专家
+    'equipment-production-agent',  // 装备与产线开发智能体
+    'standards-innovation-agent',  // 标准法规与技术创新检索
+];
 
 // 每个智能体的欢迎页配置（名称、描述、推荐问题）
 const AGENT_WELCOME_CONFIG = {
-    'xf-rd-agent': {
-        name: 'XF模具研发智能体',
-        desc: '专注于模具研发设计与工艺优化，涵盖DFMEA分析、设计评审、工艺验证等核心能力',
+    'part-design-agent': {
+        name: '零部件智能设计助手',
+        desc: '辅助参数化建模、结构方案推荐、尺寸链计算与3D标注检查，加速零部件设计',
         questions: [
-            '模具设计评审有哪些关键节点？',
-            '帮我分析DFMEA风险',
-            '模具冷却系统如何优化设计？',
-            '模具材料选型有哪些建议？'
+            '帮我推荐一个轴承座的结构方案',
+            '尺寸链计算的方法和步骤是什么？',
+            'GD&T标注有哪些常见错误？',
+            '参数化建模的最佳实践有哪些？'
         ]
     },
-    'xf-quality-agent': {
-        name: 'XF模具质量智能体',
-        desc: '专注于模具质量检测与控制，涵盖VDA6.4审核、不合格品处理、CAPA等核心能力',
+    'simulation-optimization-agent': {
+        name: '多学科仿真与优化代理',
+        desc: '自动驱动结构强度、刚度、NVH、热管理、流体等分析，并进行多目标优化',
         questions: [
-            'VDA6.4过程审核要点是什么？',
-            '不合格品纠正措施怎么制定？',
-            '8D报告怎么编写？',
-            'PPAP提交需要哪些文件？'
+            '如何设置NVH仿真的边界条件？',
+            '多目标优化有哪些常用算法？',
+            '热管理仿真的关键参数是什么？',
+            '结构强度分析的网格策略怎么选择？'
+        ]
+    },
+    'material-selection-agent': {
+        name: '材料与轻量化选型顾问',
+        desc: '基于性能、成本与工艺约束，推荐金属、复合材料或轻量化方案，预估减重效果',
+        questions: [
+            '推荐一种轻量化替代方案',
+            '碳纤维复合材料的应用场景有哪些？',
+            '拓扑优化能减重多少？',
+            '材料选型需要考虑哪些成本因素？'
+        ]
+    },
+    'manufacturing-process-agent': {
+        name: '制造工艺仿真与工艺卡生成器',
+        desc: '针对关键工艺进行成形仿真、缺陷预测，并输出标准化工艺卡片',
+        questions: [
+            '冲压成形常见的缺陷有哪些？',
+            '帮我生成一份铸造工艺卡片',
+            '如何预测回弹缺陷？',
+            '机加工工艺参数怎么优化？'
+        ]
+    },
+    'ee-design-agent': {
+        name: '电子电气设计协同智能体',
+        desc: '协助汽车电子零部件的电路设计检查、信号完整性分析、原理图与PCB布局评审',
+        questions: [
+            'PCB布局评审要点有哪些？',
+            '如何进行信号完整性分析？',
+            'EMC设计需要注意什么？',
+            '汽车电子架构的发展趋势是什么？'
+        ]
+    },
+    'embedded-software-agent': {
+        name: '嵌入式软件与功能安全助手',
+        desc: '自动生成基础代码、进行MISRA-C检查，辅助完成ISO 26262功能安全分析与文档',
+        questions: [
+            'MISRA-C常见违规项有哪些？',
+            'ISO 26262的ASIL分级标准是什么？',
+            '如何进行FTA故障树分析？',
+            'AUTOSAR架构的基本概念是什么？'
+        ]
+    },
+    'test-verification-agent': {
+        name: '试验设计与智能验证伙伴',
+        desc: '根据DVP计划推荐试验方案（DOE），实时分析试验数据，自动识别异常并生成验证报告',
+        questions: [
+            '推荐一个DOE试验方案',
+            '如何识别试验数据中的异常点？',
+            'DVP计划包含哪些内容？',
+            '正交试验和全因子试验的区别？'
+        ]
+    },
+    'dfmea-risk-agent': {
+        name: 'DFMEA与风险分析专家',
+        desc: '引导开展设计/过程失效模式分析，关联历史失效库，自动完成风险优先级评分并推送预防措施',
+        questions: [
+            'DFMEA七步法的流程是什么？',
+            '严重度、频度、探测度怎么评级？',
+            'AP措施优先级如何判定？',
+            '如何关联历史失效案例进行风险分析？'
+        ]
+    },
+    'equipment-production-agent': {
+        name: '装备与产线开发智能体',
+        desc: '支持非标装备、智能产线及工装的初步方案设计、节拍分析、布局与虚拟调试',
+        questions: [
+            '如何计算产线节拍和产能？',
+            '非标装备设计的流程是什么？',
+            '工装设计需要注意哪些要点？',
+            '虚拟调试的实施步骤有哪些？'
+        ]
+    },
+    'standards-innovation-agent': {
+        name: '标准法规与技术创新检索',
+        desc: '实时查询国内外零部件/装备的标准、法规及认证要求，提供专利、论文和TRIZ创新原理推送',
+        questions: [
+            '查询ISO 9001的核心要求',
+            'TRIZ 40个发明原理有哪些？',
+            'CCC认证需要哪些材料？',
+            '如何进行专利检索分析？'
         ]
     }
 };
@@ -76,8 +167,16 @@ function forceCorrectAgents() {
     existing.forEach(a => { existingMap[a.id] = a; });
 
     const defaults = {
-        'xf-rd-agent': { name: 'XF模具研发智能体', task: '专注于模具研发设计与工艺优化', summary: '研发设计与工艺优化' },
-        'xf-quality-agent': { name: 'XF模具质量智能体', task: '专注于模具质量检测与控制', summary: '质量检测与缺陷控制' }
+        'part-design-agent': { name: '零部件智能设计助手', task: '辅助参数化建模、结构方案推荐、尺寸链计算与3D标注检查，加速零部件设计', summary: '零部件设计' },
+        'simulation-optimization-agent': { name: '多学科仿真与优化代理', task: '自动驱动结构强度、刚度、NVH、热管理、流体等分析，并进行多目标优化', summary: '仿真与优化' },
+        'material-selection-agent': { name: '材料与轻量化选型顾问', task: '基于性能、成本与工艺约束，推荐金属、复合材料或轻量化方案，预估减重效果', summary: '材料与轻量化' },
+        'manufacturing-process-agent': { name: '制造工艺仿真与工艺卡生成器', task: '针对关键工艺进行成形仿真、缺陷预测，并输出标准化工艺卡片', summary: '制造工艺' },
+        'ee-design-agent': { name: '电子电气设计协同智能体', task: '协助汽车电子零部件的电路设计检查、信号完整性分析、原理图与PCB布局评审', summary: '电子电气设计' },
+        'embedded-software-agent': { name: '嵌入式软件与功能安全助手', task: '自动生成基础代码、进行MISRA-C检查，辅助完成ISO 26262功能安全分析与文档', summary: '嵌入式与功能安全' },
+        'test-verification-agent': { name: '试验设计与智能验证伙伴', task: '根据DVP计划推荐试验方案（DOE），实时分析试验数据，自动识别异常并生成验证报告', summary: '试验与验证' },
+        'dfmea-risk-agent': { name: 'DFMEA与风险分析专家', task: '引导开展设计/过程失效模式分析，关联历史失效库，自动完成风险优先级评分，并推送预防措施', summary: 'DFMEA与风险分析' },
+        'equipment-production-agent': { name: '装备与产线开发智能体', task: '支持进行非标装备、智能产线及工装的初步方案设计、节拍分析、布局与虚拟调试', summary: '装备与产线' },
+        'standards-innovation-agent': { name: '标准法规与技术创新检索', task: '实时查询国内外零部件/装备的标准、法规及认证要求，同时提供专利、论文和TRIZ创新原理推送', summary: '标准法规与技术创新' }
     };
 
     const correctAgents = Object.keys(defaults).map(id => {
@@ -89,7 +188,6 @@ function forceCorrectAgents() {
             task: ex ? (ex.task || def.task) : def.task,
             summary: ex ? (ex.summary || def.summary) : def.summary,
             mode: 'agent',
-            icon: id === 'xf-rd-agent' ? '🔧' : '✅',
             created_at: ex ? (ex.created_at || 0) : 0,
             updated_at: ex ? (ex.updated_at || null) : null,
             chat_ids: ex ? (ex.chat_ids || []) : []
@@ -585,7 +683,9 @@ function toggleAgentKbUpload() {
 // 每个模式独立记录当前会话ID，切换模式时恢复
 let modeChatId = { agent: null, chat: null };
 // Per-agent active chat tracking for conversation isolation
-let agentActiveChatId = { 'xf-rd-agent': null, 'xf-quality-agent': null };
+let agentActiveChatId = {};
+// 初始化所有允许智能体的活跃聊天ID
+ALLOWED_AGENT_IDS.forEach(id => { agentActiveChatId[id] = null; });
 
 function saveAgentActiveChatIds() {
     localStorage.setItem('agentActiveChatIds', JSON.stringify(agentActiveChatId));

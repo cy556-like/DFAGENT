@@ -319,6 +319,29 @@ def create_app() -> FastAPI:
                     except Exception as e:
                         logger.warning(f"[定期清理] 导出文件清理失败: {e}")
                     
+                                        # 2.5 清理过期的临时上传文件（超过7天的，防止孤立临时文件无限堆积）
+                    try:
+                        temp_base_dir = os.path.join(settings.DATA_DIR, "temp")
+                        if os.path.exists(temp_base_dir):
+                            cleaned_temp = 0
+                            now = time.time()
+                            max_temp_age = 604800  # 7天 = 7 * 24 * 3600
+                            for item in os.listdir(temp_base_dir):
+                                sub_dir = os.path.join(temp_base_dir, item)
+                                if os.path.isdir(sub_dir):
+                                    try:
+                                        mtime = os.path.getmtime(sub_dir)
+                                        if now - mtime > max_temp_age:
+                                            import shutil
+                                            shutil.rmtree(sub_dir)
+                                            cleaned_temp += 1
+                                    except Exception:
+                                        pass
+                            if cleaned_temp > 0:
+                                logger.info(f"[定期清理] 清理了 {cleaned_temp} 个过期临时目录（>7天）")
+                    except Exception as e:
+                        logger.warning(f"[定期清理] 临时文件清理失败: {e}")
+                    
                     # 3. 记录当前内存状态
                     try:
                         from app.memory.manager import _session_store
@@ -523,3 +546,4 @@ if __name__ == "__main__":
         # 默认5秒，改为30秒（SSE流式响应需要较长的空闲间隔）
         timeout_keep_alive=30,
     )
+

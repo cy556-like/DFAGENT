@@ -476,11 +476,18 @@ def get_agent(web_search: bool = False):
     return _agent_graph
 
 def reset_agent():
-    """重置 Agent 实例（切换模型后调用，下次对话会自动重建）"""
-    global _agent_graph, _llm_cache, _agent_prompt_graph_cache
+    """重置 Agent 实例（切换模型后调用，下次对话会自动重建）
+    
+    [优化] 不再 _llm_cache.clear()，保留其他模型的 LLM Client 缓存：
+    - LLM 缓存按 (model, api_key, base_url, temperature) 隔离，切换模型不影响其他模型的缓存
+    - 保留缓存后，用户在多个模型间切换时无需重复建立 TCP+TLS 连接（省 500ms~3s）
+    - 过期清理由 cleanup_stale_caches() 按 TTL=15min 自动处理
+    """
+    global _agent_graph, _agent_prompt_graph_cache
     _agent_graph = None
-    _llm_cache.clear()  # [优化1] 模型切换时清空 LLM 缓存
-    _agent_prompt_graph_cache.clear()  # [优化2] 清空 Agent Graph 缓存
+    # [优化] 不再 clear _llm_cache：其他模型的缓存应保留，切回时直接命中
+    # 旧代码 _llm_cache.clear() 导致每次切换模型都清空全部缓存，命中率仅~50%
+    _agent_prompt_graph_cache.clear()  # Agent Graph 绑定模型，必须清空重建
     _agent_prompt_graph_timestamps.clear()  # 清空缓存时间戳
 
 

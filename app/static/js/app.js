@@ -58,7 +58,7 @@ function sortAgentsByFixedOrder(agents) {
 const AGENT_WELCOME_CONFIG = {
     'dfmea-risk-agent': {
         name: 'DFMEA与风险分析专家',
-        desc: '引导开展设计/过程失效模式分析，关联历史失效库，自动完成风险优先级评分并推送预防措施',
+        desc: '引导开展设计/过程失效模式分析，关联历史失效库，自动完成风险优先级评分，并推送预防措施',
         questions: [
             'DFMEA七步法的流程是什么？',
             '严重度、频度、探测度怎么评级？',
@@ -78,7 +78,7 @@ const AGENT_WELCOME_CONFIG = {
     },
     'simulation-optimization-agent': {
         name: '多学科仿真与优化代理',
-        desc: '自动驱动结构强度、刚度、NVH、热管理、流体等分析，并进行多目标优化',
+        desc: '自动驱动结构强度、刚度、NVH、热管理、流体等分析，并进行多目标优化，减少手动仿真迭代',
         questions: [
             '如何设置NVH仿真的边界条件？',
             '多目标优化有哪些常用算法？',
@@ -88,7 +88,7 @@ const AGENT_WELCOME_CONFIG = {
     },
     'material-selection-agent': {
         name: '材料与轻量化选型顾问',
-        desc: '基于性能、成本与工艺约束，推荐金属、复合材料或轻量化方案，预估减重效果',
+        desc: '基于性能、成本与工艺约束，从材料库中推荐金属、复合材料或轻量化方案，并预估减重效果',
         questions: [
             '推荐一种轻量化替代方案',
             '碳纤维复合材料的应用场景有哪些？',
@@ -98,7 +98,7 @@ const AGENT_WELCOME_CONFIG = {
     },
     'manufacturing-process-agent': {
         name: '制造工艺仿真与工艺卡生成器',
-        desc: '针对关键工艺进行成形仿真、缺陷预测，并输出标准化工艺卡片',
+        desc: '针对关键工艺，进行成形仿真、缺陷预测，并输出标准化工艺卡片',
         questions: [
             '冲压成形常见的缺陷有哪些？',
             '帮我生成一份铸造工艺卡片',
@@ -108,7 +108,7 @@ const AGENT_WELCOME_CONFIG = {
     },
     'ee-design-agent': {
         name: '电子电气设计协同智能体',
-        desc: '协助汽车电子零部件的电路设计检查、信号完整性分析、原理图与PCB布局评审',
+        desc: '协助汽车电子零部件（传感器、控制器等）的电路设计检查、信号完整性分析、原理图与PCB布局评审',
         questions: [
             'PCB布局评审要点有哪些？',
             '如何进行信号完整性分析？',
@@ -118,7 +118,7 @@ const AGENT_WELCOME_CONFIG = {
     },
     'embedded-software-agent': {
         name: '嵌入式软件与功能安全助手',
-        desc: '自动生成基础代码、进行MISRA-C检查，辅助完成ISO 26262功能安全分析与文档',
+        desc: '自动生成基础代码、进行MISRA-C检查，辅助完成功能安全（ISO 26262）相关的安全分析与文档',
         questions: [
             'MISRA-C常见违规项有哪些？',
             'ISO 26262的ASIL分级标准是什么？',
@@ -128,7 +128,7 @@ const AGENT_WELCOME_CONFIG = {
     },
     'test-verification-agent': {
         name: '试验设计与智能验证伙伴',
-        desc: '根据DVP计划推荐试验方案（DOE），实时分析试验数据，自动识别异常并生成验证报告',
+        desc: '根据DVP计划推荐试验方案（DOE），实时分析台架/道路试验数据，自动识别异常并生成验证报告',
         questions: [
             '推荐一个DOE试验方案',
             '如何识别试验数据中的异常点？',
@@ -136,19 +136,9 @@ const AGENT_WELCOME_CONFIG = {
             '正交试验和全因子试验的区别？'
         ]
     },
-    'dfmea-risk-agent': {
-        name: 'DFMEA与风险分析专家',
-        desc: '引导开展设计/过程失效模式分析，关联历史失效库，自动完成风险优先级评分并推送预防措施',
-        questions: [
-            'DFMEA七步法的流程是什么？',
-            '严重度、频度、探测度怎么评级？',
-            'AP措施优先级如何判定？',
-            '如何关联历史失效案例进行风险分析？'
-        ]
-    },
     'equipment-production-agent': {
         name: '装备与产线开发智能体',
-        desc: '支持非标装备、智能产线及工装的初步方案设计、节拍分析、布局与虚拟调试',
+        desc: '支持进行非标装备、智能产线及工装的初步方案设计、节拍分析、布局与虚拟调试',
         questions: [
             '如何计算产线节拍和产能？',
             '非标装备设计的流程是什么？',
@@ -158,7 +148,7 @@ const AGENT_WELCOME_CONFIG = {
     },
     'standards-innovation-agent': {
         name: '标准法规与技术创新检索',
-        desc: '实时查询国内外零部件/装备的标准、法规及认证要求，提供专利、论文和TRIZ创新原理推送',
+        desc: '实时查询国内外零部件/装备的标准、法规及认证要求，同时提供专利、论文和TRIZ创新原理推送，激发技术突破',
         questions: [
             '查询ISO 9001的核心要求',
             'TRIZ 40个发明原理有哪些？',
@@ -192,14 +182,14 @@ function forceCorrectAgents() {
     const defaults = {
         'dfmea-risk-agent': { name: 'DFMEA与风险分析专家', task: '引导开展设计/过程失效模式分析，关联历史失效库，自动完成风险优先级评分，并推送预防措施', summary: 'DFMEA与风险分析' },
         'part-design-agent': { name: '零部件智能设计助手', task: '辅助参数化建模、结构方案推荐、尺寸链计算与3D标注检查，加速零部件设计', summary: '零部件设计' },
-        'simulation-optimization-agent': { name: '多学科仿真与优化代理', task: '自动驱动结构强度、刚度、NVH、热管理、流体等分析，并进行多目标优化', summary: '仿真与优化' },
-        'material-selection-agent': { name: '材料与轻量化选型顾问', task: '基于性能、成本与工艺约束，推荐金属、复合材料或轻量化方案，预估减重效果', summary: '材料与轻量化' },
-        'manufacturing-process-agent': { name: '制造工艺仿真与工艺卡生成器', task: '针对关键工艺进行成形仿真、缺陷预测，并输出标准化工艺卡片', summary: '制造工艺' },
-        'ee-design-agent': { name: '电子电气设计协同智能体', task: '协助汽车电子零部件的电路设计检查、信号完整性分析、原理图与PCB布局评审', summary: '电子电气设计' },
-        'embedded-software-agent': { name: '嵌入式软件与功能安全助手', task: '自动生成基础代码、进行MISRA-C检查，辅助完成ISO 26262功能安全分析与文档', summary: '嵌入式与功能安全' },
-        'test-verification-agent': { name: '试验设计与智能验证伙伴', task: '根据DVP计划推荐试验方案（DOE），实时分析试验数据，自动识别异常并生成验证报告', summary: '试验与验证' },
+        'simulation-optimization-agent': { name: '多学科仿真与优化代理', task: '自动驱动结构强度、刚度、NVH、热管理、流体等分析，并进行多目标优化，减少手动仿真迭代', summary: '仿真与优化' },
+        'material-selection-agent': { name: '材料与轻量化选型顾问', task: '基于性能、成本与工艺约束，从材料库中推荐金属、复合材料或轻量化方案，并预估减重效果', summary: '材料与轻量化' },
+        'manufacturing-process-agent': { name: '制造工艺仿真与工艺卡生成器', task: '针对关键工艺，进行成形仿真、缺陷预测，并输出标准化工艺卡片', summary: '制造工艺' },
+        'ee-design-agent': { name: '电子电气设计协同智能体', task: '协助汽车电子零部件（传感器、控制器等）的电路设计检查、信号完整性分析、原理图与PCB布局评审', summary: '电子电气设计' },
+        'embedded-software-agent': { name: '嵌入式软件与功能安全助手', task: '自动生成基础代码、进行MISRA-C检查，辅助完成功能安全（ISO 26262）相关的安全分析与文档', summary: '嵌入式与功能安全' },
+        'test-verification-agent': { name: '试验设计与智能验证伙伴', task: '根据DVP计划推荐试验方案（DOE），实时分析台架/道路试验数据，自动识别异常并生成验证报告', summary: '试验与验证' },
         'equipment-production-agent': { name: '装备与产线开发智能体', task: '支持进行非标装备、智能产线及工装的初步方案设计、节拍分析、布局与虚拟调试', summary: '装备与产线' },
-        'standards-innovation-agent': { name: '标准法规与技术创新检索', task: '实时查询国内外零部件/装备的标准、法规及认证要求，同时提供专利、论文和TRIZ创新原理推送', summary: '标准法规与技术创新' }
+        'standards-innovation-agent': { name: '标准法规与技术创新检索', task: '实时查询国内外零部件/装备的标准、法规及认证要求，同时提供专利、论文和TRIZ创新原理推送，激发技术突破', summary: '标准法规与技术创新' }
     };
 
     const correctAgents = Object.keys(defaults).map(id => {

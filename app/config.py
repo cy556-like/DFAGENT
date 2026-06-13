@@ -32,7 +32,7 @@ AVAILABLE_MODELS = [
 # 支持图片分析的视觉模型列表
 VISION_MODELS = {"glm-4v-plus", "glm-4v", "glm-4v-flash"}
 # 默认视觉模型（当用户上传图片时自动切换）
-DEFAULT_VISION_MODEL = "glm-4v-plus"
+DEFAULT_VISION_MODEL = "glm-4v-flash"
 
 # 快速模型列表（用于意图路由，加速简单问题的响应）
 FAST_MODELS = {"DeepSeek-V4-Flash", "ark-code-latest"}

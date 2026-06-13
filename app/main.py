@@ -272,10 +272,10 @@ def create_app() -> FastAPI:
         # 启动时预初始化 Embedding 模型，验证 API 可用性
         try:
             from app.rag.document import get_embeddings, get_indexing_mode
-            get_embeddings()
-            logging.getLogger("app").info(f"🚀 Embedding 初始化完成，索引模式: {get_indexing_mode()}")
+            await asyncio.to_thread(get_embeddings)
+            print(f"🚀 Embedding 初始化完成，索引模式: {get_indexing_mode()}")
         except Exception as e:
-            logging.getLogger("app").warning(f"⚠️ Embedding 预初始化异常: {e}")
+            print(f"⚠️ Embedding 预初始化异常: {e}")
         
         async def _periodic_cleanup():
             """每5分钟执行一次清理：

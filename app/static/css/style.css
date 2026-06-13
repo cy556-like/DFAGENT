@@ -1619,7 +1619,7 @@ html { scroll-behavior: smooth; }
 .welcome-center .welcome-agent-name { font-size: 26px; margin-bottom: 6px; color: var(--accent, #D4A843); font-weight: 700; }
 .welcome-center .welcome-agent-desc { color: var(--text-secondary); font-size: 14px; line-height: 1.8; margin-bottom: 20px; max-width: 480px; margin-left: auto; margin-right: auto; }
 .welcome-center p { color: var(--text-secondary); font-size: 15px; line-height: 1.7; margin-bottom: 24px; }
-.welcome-center .quick-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; max-width: 720px; margin-left: auto; margin-right: auto; }
+.welcome-center .quick-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; max-width: 720px; margin-left: auto; margin-right: auto; justify-content: center; }
 .welcome-center .quick-actions.many-questions { max-width: 720px; gap: 8px; }
 .quick-action {
     display: inline-flex;

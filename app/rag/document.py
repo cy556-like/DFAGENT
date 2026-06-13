@@ -603,7 +603,7 @@ def reindex_all_documents(agent_id: str = None):
         if os.path.exists(scan_dir):
             for fname in os.listdir(scan_dir):
                 ext = os.path.splitext(fname)[1].lower()
-                if ext in {'.pdf', '.txt', '.docx'}:
+                if ext in {'.pdf', '.txt', '.docx', '.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp'}:
                     file_path = os.path.join(scan_dir, fname)
                     if os.path.isfile(file_path):
                         document_files.add(fname)
@@ -1175,14 +1175,78 @@ def load_xlsx_document(file_path: str) -> list:
         return []
 
 
+def _load_image_as_document(file_path: str) -> list:
+    """使用视觉模型(VLM)解析图片文件，提取文字内容后转为文档对象
+
+    通过调用 glm-4v-plus 视觉模型，对图片进行详细的OCR和内容描述，
+    将提取的文字作为文档内容索引到知识库。
+    支持 PNG/JPG/JPEG/GIF/BMP/WebP 格式。
+
+    原理：图片 → base64 → VLM(glm-4v-plus) → 提取文字 → Document对象
+    VLM 仅在索引阶段调用一次，后续检索走普通文本检索链路，无需再次调用VLM。
+    """
+    import base64
+    from langchain_core.documents import Document
+    try:
+        from langchain_openai import ChatOpenAI
+    except ImportError:
+        from langchain_community.chat_models import ChatOpenAI
+    from app.config import settings, DEFAULT_VISION_MODEL
+
+    ext = os.path.splitext(file_path)[1].lower()
+    mime_map = {
+        ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+        ".gif": "image/gif", ".bmp": "image/bmp", ".webp": "image/webp",
+    }
+    mime_type = mime_map.get(ext, "image/png")
+
+    # 读取图片并转base64
+    with open(file_path, "rb") as img_f:
+        img_bytes = img_f.read()
+    b64 = base64.b64encode(img_bytes).decode("utf-8")
+    image_url = f"data:{mime_type};base64,{b64}"
+
+    # 构建多模态消息
+    filename = os.path.basename(file_path)
+    multimodal_content = [
+        {"type": "text", "text": f"请详细描述这张图片中的所有文字和内容，包括表格、图表、流程图等信息。请尽可能完整地转录所有文字，不要遗漏。"},
+        {"type": "image_url", "image_url": {"url": image_url}},
+    ]
+
+    # 使用视觉模型解析图片
+    logger.info(f"开始VLM解析图片: {filename} ({len(img_bytes)} bytes)")
+    try:
+        llm = ChatOpenAI(
+            model=DEFAULT_VISION_MODEL,
+            api_key=settings.LLM_API_KEY,
+            base_url=settings.LLM_BASE_URL,
+            temperature=0.1,
+            max_tokens=4096,
+            request_timeout=120,
+        )
+        from langchain_core.messages import HumanMessage
+        response = llm.invoke([HumanMessage(content=multimodal_content)])
+        extracted_text = response.content if response.content else ""
+    except Exception as e:
+        logger.warning(f"VLM解析图片失败: {e}，返回基本信息")
+        extracted_text = f"[图片文件: {filename}，VLM解析失败: {str(e)}]"
+
+    if not extracted_text or not extracted_text.strip():
+        extracted_text = f"[图片文件: {filename}，未提取到文字内容]"
+
+    logger.info(f"VLM解析图片完成: {filename}，提取文字 {len(extracted_text)} 字符")
+    return [Document(page_content=extracted_text, metadata={"source": file_path, "file_type": "image", "image_file": filename})]
+
+
 def load_document(file_path: str) -> list:
     """
     根据文件类型加载文档
-    支持：PDF、TXT、MD、DOCX、XLSX、XLS
+    支持：PDF、TXT、MD、DOCX、XLSX、XLS、图片(PNG/JPG/JPEG/GIF/BMP/WebP)
 
     DOCX 文件使用 python-docx 加载，保留表格结构为 Markdown 格式，
     解决 Docx2txtLoader 展平表格导致结构丢失的问题。
     XLSX/XLS 文件使用 openpyxl 加载，将工作表转为 Markdown 表格格式。
+    图片文件使用 VLM(视觉模型) 解析，提取文字内容后作为文档索引。
     """
     ext = os.path.splitext(file_path)[1].lower()
 
@@ -1199,8 +1263,10 @@ def load_document(file_path: str) -> list:
         return _load_docx_with_tables(file_path)
     elif ext in (".xlsx", ".xls"):
         return load_xlsx_document(file_path)
+    elif ext in (".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp"):
+        return _load_image_as_document(file_path)
     else:
-        raise ValueError(f"不支持的文件格式: {ext}，仅支持 PDF/TXT/MD/DOCX/XLSX/XLS")
+        raise ValueError(f"不支持的文件格式: {ext}，仅支持 PDF/TXT/MD/DOCX/XLSX/XLS/图片")
 
 
 def _split_markdown_by_headers(docs: list, chunk_size: int = 800, chunk_overlap: int = 200) -> list:
@@ -2269,7 +2335,7 @@ def list_indexed_documents(agent_id: str = None) -> list[str]:
     if os.path.exists(scan_dir):
         for fname in os.listdir(scan_dir):
             ext = os.path.splitext(fname)[1].lower()
-            if ext in {'.pdf', '.txt', '.docx'}:
+            if ext in {'.pdf', '.txt', '.docx', '.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp'}:
                 file_path = os.path.join(scan_dir, fname)
                 if os.path.isfile(file_path):
                     sources.add(fname)

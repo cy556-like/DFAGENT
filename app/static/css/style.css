@@ -3474,8 +3474,8 @@ html { scroll-behavior: smooth; }
     cursor: pointer;
     transition: all 0.15s;
     margin-bottom: 4px;
-    border: 1px solid #d0d0d0;
-    background: #fafafa;
+    border: 1px solid #c0c0c0;
+    background: #e8e8e8;
 }
 .agent-item:hover {
     background: #eeeeef;
@@ -3492,11 +3492,11 @@ html { scroll-behavior: smooth; }
 }
 .agent-item.active {
     background: #e8e8e9;
-    border-color: #D4A843;
+    border-color: #C62828;
 }
 [data-theme="dark"] .agent-item.active {
     background: #2e2e2e;
-    border-color: #E8C55A;
+    border-color: #EF5350;
 }
 [data-theme="dark"] .agent-item-icon {
     background: linear-gradient(135deg, #0d0d0d, #2a2a2a);

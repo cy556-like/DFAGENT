@@ -1625,7 +1625,7 @@ html { scroll-behavior: smooth; }
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    padding: 8px 16px;
+    padding: 8px 14px;
     background: var(--bg-input, #fff);
     border: 1px solid var(--border, #e5e5e5);
     border-radius: 10px;
@@ -1636,10 +1636,12 @@ html { scroll-behavior: smooth; }
     text-align: center;
     line-height: 1.5;
     transition: all 0.15s;
-    white-space: nowrap;
-    flex-shrink: 0;
+    white-space: normal;
+    word-break: break-word;
+    flex: 0 0 auto;
+    width: auto;
     max-width: calc(20% - 7px);
-    min-width: auto;
+    min-height: 36px;
 }
 .quick-action:hover { color: var(--accent, #D4A843); border-color: var(--accent, #D4A843); background: rgba(212,168,67,0.06); transform: translateY(-1px); }
 

@@ -15,8 +15,6 @@ load_dotenv()
 
 # 可用的 LLM 模型列表
 AVAILABLE_MODELS = [
-    # 豆包 Auto 模式（火山引擎 Coding Plan，自动选模型）
-    {"id": "ark-code-latest", "name": "Doubao-Auto", "desc": "豆包Auto模式，效果+速度智能选择"},
     # DeepSeek 系列（火山引擎）
     {"id": "DeepSeek-V4-Flash", "name": "DeepSeek-V4-Flash", "desc": "DeepSeek快速版，性价比高"},
     # GLM 系列（智谱AI）
@@ -39,10 +37,10 @@ VISION_API_KEY: str = os.getenv("VISION_API_KEY", os.getenv("LLM_API_KEY", ""))
 VISION_BASE_URL: str = os.getenv("VISION_BASE_URL", "https://open.bigmodel.cn/api/paas/v4")
 
 # 快速模型列表（用于意图路由，加速简单问题的响应）
-FAST_MODELS = {"DeepSeek-V4-Flash", "ark-code-latest"}
+FAST_MODELS = {"DeepSeek-V4-Flash"}
 
 # 火山引擎模型列表（走火山引擎Ark Coding API，包括豆包Auto/DeepSeek/豆包）
-VOLCENGINE_MODELS = {"ark-code-latest", "DeepSeek-V4-Flash", "Doubao-Seed-2.0-pro"}
+VOLCENGINE_MODELS = {"DeepSeek-V4-Flash", "Doubao-Seed-2.0-pro"}
 
 # DeepSeek 模型列表（兼容旧代码引用，走火山引擎Coding API）
 DEEPSEEK_MODELS = {"DeepSeek-V4-Flash"}

@@ -54,13 +54,16 @@ QWEN_MODELS = {"qwen3.7-plus"}
 # MiMo模型列表（走小米MiMo API）
 MIMO_MODELS = {"mimo-v2.5-pro"}
 
+# GLM模型列表（走阿里云百炼平台，兼容模式代理智谱模型）
+GLM_MODELS = {"glm-5.1"}
+
 
 class Settings:
     """应用配置（[#22] 支持运行时热更新）"""
 
-    # LLM 配置（智谱AI默认）
+    # LLM 默认配置（阿里云百炼平台，兼容模式代理多家模型）
     LLM_API_KEY: str = os.getenv("LLM_API_KEY", "")
-    LLM_BASE_URL: str = os.getenv("LLM_BASE_URL", "https://open.bigmodel.cn/api/paas/v4")
+    LLM_BASE_URL: str = os.getenv("LLM_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
     LLM_MODEL: str = os.getenv("LLM_MODEL", "glm-5.1")
 
     # LLM 备用配置（主Key失效时自动切换）
@@ -78,6 +81,10 @@ class Settings:
     # MiMo独立配置（小米）
     MIMO_API_KEY: str = os.getenv("MIMO_API_KEY", "")
     MIMO_BASE_URL: str = os.getenv("MIMO_BASE_URL", "https://api.xiaomimimo.com/v1")
+
+    # GLM独立配置（阿里云百炼平台，走 LLM_API_KEY/LLM_BASE_URL）
+    GLM_API_KEY: str = os.getenv("GLM_API_KEY", os.getenv("LLM_API_KEY", ""))
+    GLM_BASE_URL: str = os.getenv("GLM_BASE_URL", os.getenv("LLM_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"))
 
     # Embedding 模型
     EMBEDDING_MODEL: str = os.getenv("EMBEDDING_MODEL", "embedding-3")

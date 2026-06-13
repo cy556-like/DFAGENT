@@ -3,6 +3,12 @@
  * 主脚本 - 处理认证、聊天、会话管理、导出等功能
  */
 
+// ===== [BUG FIX] Browser Back Button Support =====
+// The app uses CSS-based SPA navigation (show/hide elements) without updating
+// browser history. This causes the back button to exit the app entirely
+// instead of returning to the login page. Fix: use history.pushState to
+// record page transitions, and listen for popstate to handle back/forward.
+
 let currentUser = null;
 let userRole = null;
 let authToken = null;
@@ -1270,6 +1276,8 @@ async function doLogin() {
                 document.getElementById('loginModal').classList.remove('show');
                 document.getElementById('chatPage').style.display = 'flex';
                 document.body.classList.add('body-chat-mode');
+                // [BUG FIX] Push history state so browser back button returns to login
+                history.pushState({page: 'chat'}, '');
                 document.getElementById('sidebarUsername').textContent = username;
                 document.getElementById('sidebarAvatar').textContent = username[0].toUpperCase();
                 // 显示管理员标识
@@ -1311,7 +1319,47 @@ function doLogout() {
     document.getElementById('loginUser').value = '';
     document.getElementById('loginPass').value = '';
     updateHeaderKbVisibility();
+    // [BUG FIX] Update history state so back button is consistent
+    if (history.state && history.state.page === 'chat') {
+        history.replaceState({page: 'login'}, '');
+    }
 }
+
+// [BUG FIX] Handle browser back/forward navigation
+// When user presses back from chat, return to login page (with logout).
+// When user presses forward from login while authenticated, return to chat.
+window.addEventListener('popstate', function(e) {
+    const loginModal = document.getElementById('loginModal');
+    const chatPage = document.getElementById('chatPage');
+    if (e.state && e.state.page === 'chat') {
+        // Forward to chat - only if still authenticated
+        if (currentUser && authToken) {
+            loginModal.classList.remove('show');
+            chatPage.style.display = 'flex';
+            document.body.classList.add('body-chat-mode');
+        } else {
+            // Not authenticated anymore, go back to login
+            history.replaceState({page: 'login'}, '');
+        }
+    } else {
+        // Back to login - perform logout to ensure clean state
+        if (currentUser) {
+            // Clear session but don't push another history entry
+            currentUser = null; userRole = null; authToken = null; selectedFile = null; currentChatId = null; allChats = []; currentAgentId = null; agentKbUploadMode = false;
+            localStorage.removeItem('authToken');
+            localStorage.removeItem('userRole');
+            const kbPage = document.getElementById('kbPage');
+            if (kbPage) kbPage.style.display = 'none';
+            chatPage.style.display = 'none';
+            loginModal.classList.add('show');
+            document.body.classList.remove('body-chat-mode');
+            document.getElementById('chatMessages').innerHTML = '';
+            document.getElementById('loginUser').value = '';
+            document.getElementById('loginPass').value = '';
+            updateHeaderKbVisibility();
+        }
+    }
+});
 
 // ===== Auto-login with JWT token =====
 async function tryAutoLogin() {
@@ -1327,6 +1375,8 @@ async function tryAutoLogin() {
             document.getElementById('loginModal').classList.remove('show');
             document.getElementById('chatPage').style.display = 'flex';
             document.body.classList.add('body-chat-mode');
+            // [BUG FIX] Push history state so browser back button returns to login
+            history.pushState({page: 'chat'}, '');
             document.getElementById('sidebarUsername').textContent = data.username;
             document.getElementById('sidebarAvatar').textContent = data.username[0].toUpperCase();
             loadChatList();
@@ -2686,6 +2736,10 @@ document.addEventListener('DOMContentLoaded', async function() {
 
     // [禁用自动登录] 每次访问必须手动输入用户名密码
     localStorage.removeItem('authToken');
+
+    // [BUG FIX] Set initial history state for login page
+    // This ensures the browser back button has a proper state to return to
+    history.replaceState({page: 'login'}, '');
 
     // Landing page: nav scroll & smooth scroll (宣传页已删除，跳过)
 

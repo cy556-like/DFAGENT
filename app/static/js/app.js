@@ -685,7 +685,6 @@ function renderMyAgents() {
         item.setAttribute('data-agent-id', agent.id);
         const initial = (agent.name && agent.name[0] || '?').toUpperCase();
         item.innerHTML = `
-            <div class="agent-item-icon">${initial}</div>
             <div class="agent-item-info">
                 <div class="agent-item-name">${escapeHtml(agent.name)}</div>
             </div>

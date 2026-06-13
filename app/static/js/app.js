@@ -1419,6 +1419,7 @@ function updateWelcomeContent() {
         welcomeEl.innerHTML = `
             <h2 class="welcome-agent-name">${escapeHtml(config.name)}</h2>
             <p class="welcome-agent-desc">${escapeHtml(config.desc)}</p>
+            <p class="welcome-agent-hint">(只有在知识库丰富且准确，智能体才能发挥最大作用)</p>
             <div class="quick-actions${config.questions.length >= 8 ? ' many-questions' : ''}">
                 ${config.questions.map(q => {
                     if (typeof q === 'object' && q.label) {

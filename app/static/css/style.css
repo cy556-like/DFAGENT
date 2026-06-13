@@ -3598,13 +3598,14 @@ html { scroll-behavior: smooth; }
 .agent-action-btn.new-chat:hover {
     background: rgba(198,40,40,0.08);
 }
-.agent-action-btn.new-chat:hover .agent-new-chat-icon {
-    opacity: 0.85;
+.agent-action-btn.new-chat:hover .agent-new-chat-icon rect {
+    fill: #B71C1C;
 }
-.agent-new-chat-icon {
-    width: 24px;
-    height: 24px;
-    object-fit: contain;
+[data-theme="dark"] .agent-new-chat-icon rect {
+    fill: #EF5350;
+}
+[data-theme="dark"] .agent-new-chat-icon path {
+    fill: white;
 }
 
 

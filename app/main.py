@@ -273,9 +273,9 @@ def create_app() -> FastAPI:
         try:
             from app.rag.document import get_embeddings, get_indexing_mode
             get_embeddings()
-            logger.info(f"🚀 Embedding 初始化完成，索引模式: {get_indexing_mode()}")
+            logging.getLogger("app").info(f"🚀 Embedding 初始化完成，索引模式: {get_indexing_mode()}")
         except Exception as e:
-            logger.warning(f"⚠️ Embedding 预初始化异常: {e}")
+            logging.getLogger("app").warning(f"⚠️ Embedding 预初始化异常: {e}")
         
         async def _periodic_cleanup():
             """每5分钟执行一次清理：

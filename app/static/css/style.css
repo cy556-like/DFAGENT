@@ -1639,7 +1639,6 @@ html { scroll-behavior: smooth; }
     white-space: nowrap;
     flex: 0 0 auto;
     width: auto;
-    max-width: calc(16.666% - 7px);
     min-height: 36px;
 }
 .quick-action:hover { color: var(--accent, #D4A843); border-color: var(--accent, #D4A843); background: rgba(212,168,67,0.06); transform: translateY(-1px); }

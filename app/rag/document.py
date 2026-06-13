@@ -426,17 +426,20 @@ def get_embeddings():
                 request_timeout=15,  # 超时保护：15秒，避免初始化卡死整个服务
             )
 
-            # 首次初始化时发测试请求验证 Embedding API 可用，避免静默降级
+            # 首次初始化时发测试请求验证 Embedding API 可用
             try:
                 _test_vec = _embeddings_instance.embed_query("测试")
-                logger.info(f"Embedding API 验证成功，向量维度={len(_test_vec)}")
+                logger.info(f"✅ Embedding 模型已初始化（智谱云端API）: {embedding_model}，向量维度={len(_test_vec)}")
             except Exception as test_err:
-                logger.error(f"Embedding API 验证失败: {test_err}")
-                raise  # 向上抛出，触发降级逻辑
+                # API 不可用 → 降级为关键词索引模式，仅打警告不打错误
+                _embeddings_instance = None
+                _embedding_available = False
+                _embedding_degraded_at = time.time()
+                logger.warning(f"⚠️ Embedding API 验证失败（{test_err}），已降级为关键词索引模式，{_EMBEDDING_RECOVERY_TIMEOUT}s 后自动重试")
+                return None
 
             _embeddings_instance._created_at = time.time()  # [v8] 记录创建时间用于 TTL 检查
             _embedding_available = True
-            logger.info(f"✅ Embedding 模型已初始化（智谱云端API）: {embedding_model}")
         except ImportError:
             logger.error("langchain-openai 未安装，Embedding 不可用")
             _embeddings_instance = None

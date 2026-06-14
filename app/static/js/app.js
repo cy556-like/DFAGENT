@@ -1452,18 +1452,99 @@ function updateWelcomeContent() {
     const config = currentAgentId ? getAgentWelcomeConfig(currentAgentId) : null;
 
     if (config) {
+        // 将20个按钮分配到5行，每行至少2个，贪心平衡行宽
+        const questions = config.questions;
+        const NUM_ROWS = 5;
+        let rowsHtml = '';
+
+        if (questions.length === 20) {
+            // 估算按钮宽度（与CSS font-size=13px对应）
+            const charWidth = (ch) => {
+                const code = ch.charCodeAt(0);
+                if (code >= 0x4e00 && code <= 0x9fff) return 13; // 中文
+                if ((code >= 65 && code <= 90) || (code >= 97 && code <= 122) || (code >= 48 && code <= 57)) return 7.8; // 英文/数字
+                return 6.5; // 其他
+            };
+            const estimateWidth = (label) => {
+                let w = 0;
+                for (const ch of label) w += charWidth(ch);
+                return w + 30; // padding 14*2 + border 1*2
+            };
+
+            // 按宽度降序排列，获取原始索引
+            const indexed = questions.map((q, i) => ({
+                idx: i,
+                w: estimateWidth(typeof q === 'object' && q.label ? q.label : String(q))
+            }));
+            indexed.sort((a, b) => b.w - a.w);
+
+            // 贪心分配：每个按钮放到当前最窄的行
+            const rowItems = Array.from({length: NUM_ROWS}, () => []);
+            const rowWidths = new Array(NUM_ROWS).fill(0);
+            const GAP = 8;
+
+            for (const item of indexed) {
+                // 找最窄的行
+                let minRow = 0;
+                let minWidth = rowWidths[0];
+                for (let r = 1; r < NUM_ROWS; r++) {
+                    if (rowWidths[r] < minWidth) {
+                        minWidth = rowWidths[r];
+                        minRow = r;
+                    }
+                }
+                const gap = rowItems[minRow].length > 0 ? GAP : 0;
+                rowItems[minRow].push(item.idx);
+                rowWidths[minRow] += gap + item.w;
+            }
+
+            // 在每行内部按宽度交替排列（最宽-最窄-次宽-次窄...），增加视觉变化
+            for (let r = 0; r < NUM_ROWS; r++) {
+                const items = rowItems[r].map(idx => ({
+                    idx,
+                    w: indexed.find(x => x.idx === idx).w
+                }));
+                items.sort((a, b) => b.w - a.w);
+                const reordered = [];
+                let left = 0, right = items.length - 1;
+                while (left <= right) {
+                    reordered.push(items[left]);
+                    if (left !== right) reordered.push(items[right]);
+                    left++; right--;
+                }
+                rowItems[r] = reordered.map(x => x.idx);
+            }
+
+            // 生成5行HTML
+            for (let r = 0; r < NUM_ROWS; r++) {
+                const rowBtns = rowItems[r].map(idx => {
+                    const q = questions[idx];
+                    if (typeof q === 'object' && q.label) {
+                        return `<span class="quick-action" onclick="fillQuick(this)" data-question="${escapeHtml(q.question)}" role="button" tabindex="0">${escapeHtml(q.label)}</span>`;
+                    }
+                    return `<span class="quick-action" onclick="fillQuick(this)" data-question="${escapeHtml(q)}" role="button" tabindex="0">${escapeHtml(q)}</span>`;
+                }).join('');
+                rowsHtml += `<div class="kw-row">${rowBtns}</div>`;
+            }
+        } else {
+            // 非20个按钮时，使用原来的flex-wrap布局
+            rowsHtml = `<div class="quick-actions${questions.length >= 8 ? ' many-questions' : ''}">` +
+                questions.map(q => {
+                    if (typeof q === 'object' && q.label) {
+                        return `<span class="quick-action" onclick="fillQuick(this)" data-question="${escapeHtml(q.question)}" role="button" tabindex="0">${escapeHtml(q.label)}</span>`;
+                    }
+                    return `<span class="quick-action" onclick="fillQuick(this)" data-question="${escapeHtml(q)}" role="button" tabindex="0">${escapeHtml(q)}</span>`;
+                }).join('') +
+                `</div>`;
+        }
+
         // 智能体专属欢迎页
         welcomeEl.innerHTML = `
             <h2 class="welcome-agent-name">${escapeHtml(config.name)}</h2>
             <p class="welcome-agent-desc">${escapeHtml(config.desc)}</p>
             <p class="welcome-agent-hint">(只有在知识库丰富且准确，智能体才能发挥最大作用)</p>
-            <div class="quick-actions${config.questions.length >= 8 ? ' many-questions' : ''}">
-                ${config.questions.map(q => {
-                    if (typeof q === 'object' && q.label) {
-                        return `<span class="quick-action" onclick="fillQuick(this)" data-question="${escapeHtml(q.question)}" role="button" tabindex="0">${escapeHtml(q.label)}</span>`;
-                    }
-                    return `<span class="quick-action" onclick="fillQuick(this)" data-question="${escapeHtml(q)}" role="button" tabindex="0">${escapeHtml(q)}</span>`;
-                }).join('')}
+            <div class="quick-actions many-questions kw-five-rows">
+                ${rowsHtml}
             </div>
             <p class="welcome-keyword-hint">(提示词仅供参考，需根据自己工作，进行修改)</p>
         `;

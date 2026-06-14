@@ -1425,8 +1425,10 @@ html { scroll-behavior: smooth; }
 .chat-search input::placeholder { color: #b0b0b0; }
 
 .chat-list {
-    flex: 0 1 auto;
-    max-height: 25vh;
+    flex: 0 0 auto;
+    height: 140px;
+    min-height: 140px;
+    max-height: 140px;
     overflow-y: auto;
     padding: 6px;
 }
@@ -1630,6 +1632,8 @@ html { scroll-behavior: smooth; }
 .welcome-center p { color: var(--text-secondary); font-size: 15px; line-height: 1.7; margin-bottom: 24px; }
 .welcome-center .quick-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; max-width: 660px; margin-left: auto; margin-right: auto; justify-content: center; }
 .welcome-center .quick-actions.many-questions { max-width: 660px; gap: 8px; }
+.welcome-center .quick-actions.kw-five-rows { display: flex; flex-direction: column; gap: 8px; max-width: 660px; }
+.welcome-center .quick-actions.kw-five-rows .kw-row { display: flex; flex-wrap: nowrap; gap: 8px; justify-content: center; }
 .quick-action {
     display: inline-flex;
     align-items: center;

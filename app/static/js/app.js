@@ -1471,34 +1471,55 @@ function updateWelcomeContent() {
                 return w + 30; // padding 14*2 + border 1*2
             };
 
-            // 按宽度降序排列，获取原始索引
+            const CONTAINER = 660;
+            const GAP = 8;
+
+            // 按宽度降序排列
             const indexed = questions.map((q, i) => ({
                 idx: i,
                 w: estimateWidth(typeof q === 'object' && q.label ? q.label : String(q))
             }));
             indexed.sort((a, b) => b.w - a.w);
 
-            // 贪心分配：每个按钮放到当前最窄的行
-            const rowItems = Array.from({length: NUM_ROWS}, () => []);
-            const rowWidths = new Array(NUM_ROWS).fill(0);
-            const GAP = 8;
+            // 动态选择行模式：检查中间5个按钮能否放进一行
+            const middleFiveWidth = indexed.slice(10, 15).reduce((s, x) => s + x.w, 0) + 4 * GAP;
 
-            for (const item of indexed) {
-                // 找最窄的行
-                let minRow = 0;
-                let minWidth = rowWidths[0];
-                for (let r = 1; r < NUM_ROWS; r++) {
-                    if (rowWidths[r] < minWidth) {
-                        minWidth = rowWidths[r];
-                        minRow = r;
-                    }
-                }
-                const gap = rowItems[minRow].length > 0 ? GAP : 0;
-                rowItems[minRow].push(item.idx);
-                rowWidths[minRow] += gap + item.w;
+            // 不同智能体使用不同行模式，避免千篇一律
+            // 按钮窄的智能体可用双5行模式，按钮宽的用单5行模式
+            const agentIndex = ALLOWED_AGENT_IDS.indexOf(currentAgentId);
+            const PATTERNS_TWO5 = [
+                [3,5,4,5,3], [4,5,3,5,3], [3,5,3,5,4], [5,3,4,5,3], [3,5,5,4,3],
+                [5,3,5,4,3], [3,5,4,3,5], [5,4,3,5,3], [3,4,5,3,5], [4,3,5,3,5],
+            ];
+            const PATTERNS_ONE5 = [
+                [3,4,5,4,4], [4,3,5,4,4], [4,4,5,4,3], [4,4,5,3,4], [3,4,4,5,4],
+                [4,3,4,5,4], [4,4,3,5,4], [5,4,4,4,3], [3,5,4,4,4], [4,4,4,3,5],
+            ];
+
+            const pattern = middleFiveWidth <= CONTAINER
+                ? PATTERNS_TWO5[agentIndex >= 0 ? agentIndex % PATTERNS_TWO5.length : 0]
+                : PATTERNS_ONE5[agentIndex >= 0 ? agentIndex % PATTERNS_ONE5.length : 0];
+
+            // 按行目标数量分组：宽按钮→少行，窄按钮→多行
+            const countToRows = {};
+            for (let r = 0; r < NUM_ROWS; r++) {
+                const c = pattern[r];
+                if (!countToRows[c]) countToRows[c] = [];
+                countToRows[c].push(r);
             }
 
-            // 在每行内部按宽度交替排列（最宽-最窄-次宽-次窄...），增加视觉变化
+            const rowItems = Array.from({length: NUM_ROWS}, () => []);
+            let btnPtr = 0;
+            for (const count of Object.keys(countToRows).map(Number).sort((a, b) => a - b)) {
+                for (const rowIdx of countToRows[count]) {
+                    for (let i = 0; i < count; i++) {
+                        rowItems[rowIdx].push(indexed[btnPtr].idx);
+                        btnPtr++;
+                    }
+                }
+            }
+
+            // 每行内部交替排列（最宽-最窄-次宽-次窄），增加视觉变化
             for (let r = 0; r < NUM_ROWS; r++) {
                 const items = rowItems[r].map(idx => ({
                     idx,

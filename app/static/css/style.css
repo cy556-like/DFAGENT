@@ -1426,9 +1426,9 @@ html { scroll-behavior: smooth; }
 
 .chat-list {
     flex: 0 0 auto;
-    height: 140px;
-    min-height: 140px;
-    max-height: 140px;
+    height: 95px;
+    min-height: 95px;
+    max-height: 95px;
     overflow-y: auto;
     padding: 6px;
 }

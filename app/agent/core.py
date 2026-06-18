@@ -31,7 +31,7 @@ from langgraph.prebuilt import ToolNode, tools_condition
 
 from app.config import settings, VISION_MODELS, DEFAULT_VISION_MODEL, VISION_API_KEY, VISION_BASE_URL, FAST_MODELS, DEEPSEEK_MODELS, VOLCENGINE_MODELS, QWEN_MODELS, MIMO_MODELS, GLM_MODELS
 from app.agent.tools import ALL_TOOLS, get_tools, set_current_agent_id, set_current_session_id, get_current_session_id, reset_search_count
-from app.agent.prompts import SYSTEM_PROMPT, SYSTEM_PROMPT_WITH_WEB_SEARCH, CHAT_SYSTEM_PROMPT, get_agent_keywords_section
+from app.agent.prompts import SYSTEM_PROMPT, SYSTEM_PROMPT_WITH_WEB_SEARCH, CHAT_SYSTEM_PROMPT, get_agent_keywords_section, EXPORT_TRIGGER_KEYWORDS, EXPORT_FORMAT_MAP
 from app.memory.manager import get_session_history
 
 logger = logging.getLogger(__name__)
@@ -818,6 +818,135 @@ def _extract_content(chunk) -> str:
 # 超过此时间强制结束，避免 LLM API 挂起导致服务器无响应需 Ctrl+C
 AGENT_STREAM_TIMEOUT = 180  # 3分钟
 
+# [分步导出] 后台导出任务超时（秒）
+EXPORT_BACKGROUND_TIMEOUT = 120
+
+
+def _is_export_trigger(user_input: str, agent_id: str = None) -> bool:
+    """检测用户输入是否触发分步导出流程
+    
+    匹配规则：用户输入包含对应智能体的任意一个导出触发关键词
+    仅用于代码层快速判断，不注入 prompt
+    
+    Args:
+        user_input: 用户输入文本
+        agent_id: 智能体ID（如 'dfmea-risk-agent'）
+    
+    Returns:
+        True 如果匹配到导出触发关键词
+    """
+    if not agent_id or agent_id not in EXPORT_TRIGGER_KEYWORDS:
+        return False
+    
+    keywords = EXPORT_TRIGGER_KEYWORDS.get(agent_id, [])
+    if not keywords:
+        return False
+    
+    user_lower = user_input.lower()
+    for kw in keywords:
+        if kw.lower() in user_lower:
+            logger.info(f"导出触发关键词匹配: agent={agent_id}, keyword={kw}, input={user_input[:60]}")
+            return True
+    return False
+
+
+async def _background_export(user_input: str, agent_id: str = None, agent_task: str = None, 
+                              session_id: str = "default") -> dict:
+    """后台异步导出：用独立 LLM（Chat模式，无function call约束）生成完整文档内容并导出
+    
+    Phase 2 核心逻辑：
+    1. 使用纯文本 Chat 模式 LLM（temperature=0.3，更快的 token 生成速度）
+    2. 根据用户问题 + agent_task 生成完整文档内容（Markdown表格格式）
+    3. 调用 export_document_tool / export_xlsx_tool 导出文件
+    4. 返回下载链接
+    
+    Args:
+        user_input: 用户原始输入
+        agent_id: 智能体ID
+        agent_task: 智能体任务描述
+        session_id: 会话ID
+    
+    Returns:
+        dict: {"success": bool, "download_url": str, "filename": str, "content": str}
+    """
+    export_type = EXPORT_FORMAT_MAP.get(agent_id, 'xlsx')
+    tool_name = "export_document_tool" if export_type == 'docx' else "export_xlsx_tool"
+    file_ext = ".docx" if export_type == 'docx' else ".xlsx"
+    
+    logger.info(f"[后台导出] 开始: agent={agent_id}, type={export_type}, session={session_id}")
+    
+    try:
+        # 构建导出专用的 system prompt
+        export_prompt = f"""你是一位专业的文档生成助手。请根据用户问题生成完整的文档内容，用于导出为{file_ext}文件。
+
+## 要求
+1. 使用 Markdown 表格语法组织数据（| 列1 | 列2 | ...）
+2. 内容要专业、完整、详细
+3. 不要包含 emoji 表情符号
+4. 不要使用 === Sheet: xxx === 标记拆分多个Sheet
+5. 直接输出文档内容，不要添加"好的，以下是..."等开场白
+6. 不要包含代码块标记（```），直接输出内容
+"""
+        if agent_task:
+            export_prompt += f"\n\n## 你的专属领域\n{agent_task}"
+        
+        # 创建独立的 LLM 实例（低 temperature，加速生成）
+        llm = create_llm(deep_think=False, short_response=False)
+        
+        # 生成文档内容
+        gen_start = time.time()
+        messages = [
+            SystemMessage(content=export_prompt),
+            HumanMessage(content=f"请根据以下问题生成完整的分析内容（不要简短回答，要生成可直接导出为文档的完整内容）：\n\n{user_input}")
+        ]
+        
+        full_content = ""
+        async for chunk in llm.astream(messages):
+            content = _extract_content(chunk)
+            if content:
+                full_content += content
+        
+        gen_elapsed = time.time() - gen_start
+        logger.info(f"[后台导出] 内容生成完成: {len(full_content)} chars, 耗时={gen_elapsed:.1f}s")
+        
+        if not full_content.strip():
+            return {"success": False, "error": "LLM 生成内容为空"}
+        
+        # 调用导出工具
+        from app.agent.tools import export_document_tool, export_xlsx_tool
+        
+        filename = f"{agent_id}_{int(time.time())}{file_ext}" if agent_id else f"export_{int(time.time())}{file_ext}"
+        
+        if export_type == 'docx':
+            result = export_document_tool.invoke({"content": full_content, "filename": filename})
+        else:
+            title = user_input[:50] if user_input else "导出文档"
+            result = export_xlsx_tool.invoke({"content": full_content, "filename": filename, "title": title})
+        
+        # 解析下载链接
+        import re
+        url_match = re.search(r'/api/v1/documents/export-download/([^\s"]+)', result)
+        if url_match:
+            download_url = f"/api/v1/documents/export-download/{url_match.group(1)}"
+            actual_filename = url_match.group(1)
+        else:
+            download_url = ""
+            actual_filename = filename
+        
+        logger.info(f"[后台导出] 完成: url={download_url}")
+        
+        return {
+            "success": True,
+            "download_url": download_url,
+            "filename": actual_filename,
+            "content_preview": full_content[:200],
+        }
+        
+    except Exception as e:
+        logger.error(f"[后台导出] 失败: {e}", exc_info=True)
+        return {"success": False, "error": str(e)}
+
+
 async def chat_stream_generator(user_input: str, session_id: str = "default", web_search: bool = False, mode: str = "agent", deep_think: bool = False, agent_id: str = None, agent_task: str = None) -> AsyncGenerator[dict, None]:
     """流式对话：逐token输出，同时显示工具调用进度
     
@@ -838,6 +967,77 @@ async def chat_stream_generator(user_input: str, session_id: str = "default", we
     
     # [BUG FIX v6] 获取或创建 session 级取消事件（自动取消上一个幽灵任务）
     cancel_event = _get_or_create_cancel_event(session_id)
+    
+    # [分步导出] 检测是否为导出触发问题 → 走两阶段快速响应
+    if mode == "agent" and agent_id and _is_export_trigger(user_input, agent_id):
+        logger.info(f"[分步导出] 检测到导出触发问题: agent={agent_id}")
+        
+        # Phase 1: 快速 Chat 模式回复（1-3秒）
+        export_type = EXPORT_FORMAT_MAP.get(agent_id, 'xlsx')
+        export_type_cn = "Excel表格" if export_type == 'xlsx' else "Word文档"
+        
+        yield {"type": "thinking", "content": f"正在分析问题，准备生成{export_type_cn}..."}
+        
+        # 快速 LLM 生成简要说明
+        quick_prompt = f"用户提问：{user_input}\n\n请用1-2句话回复，说明正在为用户生成{export_type_cn}文档，请稍候。不要说其他内容，不要分析问题。"
+        quick_llm = create_llm(deep_think=False, short_response=True)
+        
+        quick_response = ""
+        try:
+            async for chunk in quick_llm.astream([HumanMessage(content=quick_prompt)]):
+                content = _extract_content(chunk)
+                if content:
+                    quick_response += content
+                    yield {"type": "token", "content": content}
+        except Exception:
+            quick_response = f"正在为您生成{export_type_cn}文档，请稍候..."
+            yield {"type": "token", "content": quick_response}
+        
+        # Phase 2: 后台异步生成并导出
+        task_id = f"export_{session_id}_{int(time.time())}"
+        yield {"type": "export_progress", "task_id": task_id, "message": f"正在后台生成{export_type_cn}..."}
+        
+        try:
+            # 用 asyncio.wait_for 限制后台导出超时
+            export_result = await asyncio.wait_for(
+                _background_export(
+                    user_input=user_input,
+                    agent_id=agent_id,
+                    agent_task=agent_task,
+                    session_id=session_id,
+                ),
+                timeout=EXPORT_BACKGROUND_TIMEOUT,
+            )
+            
+            if export_result.get("success"):
+                yield {
+                    "type": "export_ready",
+                    "task_id": task_id,
+                    "download_url": export_result["download_url"],
+                    "filename": export_result.get("filename", ""),
+                }
+                # 保存到会话历史
+                history = get_session_history(session_id)
+                try:
+                    history.add_message(HumanMessage(content=user_input))
+                    brief_reply = f"{quick_response}\n\n✅ 文档已生成：{export_result['download_url']}"
+                    history.add_message(AIMessage(content=brief_reply))
+                except Exception:
+                    pass
+            else:
+                yield {
+                    "type": "error",
+                    "content": f"文档生成失败: {export_result.get('error', '未知错误')}，请重试或换一种方式提问。"
+                }
+        except asyncio.TimeoutError:
+            yield {
+                "type": "error",
+                "content": f"文档生成超时（{EXPORT_BACKGROUND_TIMEOUT}秒），请尝试简化问题后重试。"
+            }
+        
+        yield {"type": "done"}
+        _cleanup_session_cancel(session_id)
+        return
     
     # 性能优化：意图路由 - 简单问题走Chat模式（跳过Agent循环，减少3-5秒延迟）
     if mode == "agent" and _is_simple_query(user_input) and not web_search:

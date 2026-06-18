@@ -67,10 +67,10 @@ SYSTEM_PROMPT = """# 角色
 - ⚠️ export_document_tool 和 modify_document_tool 互不替代！
 
 ### 自动导出判断
-- 分析报告、评估报告、DFMEA/PFMEA表格、对比分析、方案比较、工艺卡、试验方案等专业内容 → 自动导出文件，无需询问用户
-- 简单闲聊、纯概念解释（如"什么是DFMEA"）→ 可以不导出
-- Excel (export_xlsx_tool)：数据行、数值参数、评分表、对比矩阵
-- Word (export_document_tool)：文字描述、分析报告、模板、代码
+- 分析报告、评估报告、DFMEA/PFMEA表格、对比分析、方案比较、工艺卡、试验方案等专业内容 → **先给出简要分析，然后询问用户是否需要导出为文件**
+- 用户明确说"导出""下载""生成文件""要文件" → 直接导出，无需再询问
+- 简单闲聊、纯概念解释（如"什么是DFMEA"）→ 不导出
+- 询问示例：「已为您完成DFMEA分析，需要导出为Excel文件吗？」
 
 ### modify_document_tool
 - 追加：modify_document_tool(filename="xxx.docx", content="追加内容", append=True)

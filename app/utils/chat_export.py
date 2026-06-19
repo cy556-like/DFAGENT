@@ -1,0 +1,1179 @@
+"""
+对话导出工具模块 (Chat Export Utilities)
+=========================================
+
+提供将对话消息导出为 Word (.docx) / PowerPoint (.pptx) / PDF 的能力。
+
+核心改进（修复"导出文件中残留 Markdown 标记、可读性极差"的问题）：
+  - 内置轻量级 Markdown 解析器，将消息内容拆分为结构化块（标题、表格、列表、
+    代码块、引用块、普通段落）。
+  - Word 导出：表格 → 原生 Word 表格（带边框、表头底色、智能列宽）；
+    标题 → Heading 样式；列表 → List Bullet / List Number；代码块 → 等宽
+    字体 + 浅灰底色；行内 **粗体** / *斜体* / `代码` → 富文本 Run。
+  - PPT 导出：每个助手消息按"标题段"切分为多张幻灯片；表格 → 原生 PPT
+    Table；列表 → 项目符号；代码块 → 等宽文本框；用户消息 → 单独幻灯片。
+  - PDF 导出：复用同样的解析器，将表格渲染为 reportlab Table，避免直接
+    输出 |---|---| 这样的纯文本。
+
+所有导出函数均返回 bytes，可直接作为 HTTP Response 体返回。
+"""
+
+from __future__ import annotations
+
+import re
+import logging
+from io import BytesIO
+from typing import List, Dict, Any, Optional, Tuple
+
+logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# 1. 轻量级 Markdown 解析器
+# =============================================================================
+
+# 表格分隔行：|:---:|---|:---|
+_TABLE_SEP_RE = re.compile(r'^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)+\|?\s*$')
+# 标题：# ~ ######
+_HEADING_RE = re.compile(r'^(#{1,6})\s+(.+?)\s*#*\s*$')
+# 有序列表：1. / 1) / 1、
+_OL_RE = re.compile(r'^(\d+)[.)、]\s+(.+)$')
+# 无序列表：- / * / + 后跟空格
+_UL_RE = re.compile(r'^([-*+])\s+(.+)$')
+# 引用块：>
+_QUOTE_RE = re.compile(r'^>\s?(.*)$')
+# 分隔线：--- / *** / ___（≥3 个）
+_HR_RE = re.compile(r'^([-*_])\1{2,}\s*$')
+# 中文序号标题：一、 二、 / 第X章 / 第X节 / （一）（二）
+_CN_H2_RE = re.compile(r'^[一二三四五六七八九十]+、\s*.+')
+_CN_H3_RE = re.compile(r'^[（(][一二三四五六七八九十]+[）)]\s*.+')
+_CN_CHAPTER_RE = re.compile(r'^第[一二三四五六七八九十\d]+[章节部篇]\s*.+')
+
+
+class Block:
+    """解析后的内容块基类"""
+    type: str = 'block'
+
+    def __init__(self, **kw):
+        self.__dict__.update(kw)
+
+
+class HeadingBlock(Block):
+    type = 'heading'
+
+    def __init__(self, level: int, text: str):
+        self.level = level
+        self.text = text
+
+
+class ParagraphBlock(Block):
+    type = 'paragraph'
+
+    def __init__(self, text: str):
+        self.text = text
+
+
+class ListItemBlock(Block):
+    type = 'list_item'
+
+    def __init__(self, ordered: bool, text: str, index: int = 0, marker: str = ''):
+        self.ordered = ordered
+        self.text = text
+        self.index = index
+        self.marker = marker
+
+
+class TableBlock(Block):
+    type = 'table'
+
+    def __init__(self, header: List[str], rows: List[List[str]]):
+        self.header = header
+        self.rows = rows
+
+
+class CodeBlock(Block):
+    type = 'code'
+
+    def __init__(self, code: str, lang: str = ''):
+        self.code = code
+        self.lang = lang
+
+
+class QuoteBlock(Block):
+    type = 'quote'
+
+    def __init__(self, text: str):
+        self.text = text
+
+
+class HrBlock(Block):
+    type = 'hr'
+
+
+def parse_markdown(text: str) -> List[Block]:
+    """将一段 Markdown 文本解析为 Block 列表。
+
+    支持的元素：标题、表格、有序/无序列表、代码块、引用、分隔线、普通段落。
+    不支持的元素（HTML、链接定义等）按普通段落处理。
+    """
+    lines = text.replace('\r\n', '\n').replace('\r', '\n').split('\n')
+    blocks: List[Block] = []
+
+    i = 0
+    n = len(lines)
+    while i < n:
+        raw = lines[i]
+        stripped = raw.strip()
+
+        # 1) 空行跳过
+        if not stripped:
+            i += 1
+            continue
+
+        # 2) 代码块 ```lang ... ```
+        if stripped.startswith('```'):
+            lang = stripped[3:].strip()
+            code_lines: List[str] = []
+            i += 1
+            while i < n and not lines[i].strip().startswith('```'):
+                code_lines.append(lines[i])
+                i += 1
+            if i < n:  # 跳过结束的 ```
+                i += 1
+            blocks.append(CodeBlock('\n'.join(code_lines), lang=lang))
+            continue
+
+        # 3) 表格（首行 | ... |，第二行 |---|---|）
+        if '|' in stripped and stripped.startswith('|'):
+            if i + 1 < n and _TABLE_SEP_RE.match(lines[i + 1].strip()):
+                table_lines: List[str] = []
+                while i < n:
+                    line = lines[i].strip()
+                    if line.startswith('|') and '|' in line[1:]:
+                        table_lines.append(line)
+                        i += 1
+                    else:
+                        break
+                header, rows = _parse_table(table_lines)
+                if header:
+                    blocks.append(TableBlock(header, rows))
+                continue
+
+        # 4) 标题 # ... ######
+        m = _HEADING_RE.match(stripped)
+        if m:
+            level = len(m.group(1))
+            text = m.group(2).strip()
+            blocks.append(HeadingBlock(level, text))
+            i += 1
+            continue
+
+        # 5) 中文序号标题
+        if _CN_CHAPTER_RE.match(stripped):
+            blocks.append(HeadingBlock(2, stripped))
+            i += 1
+            continue
+        if _CN_H2_RE.match(stripped):
+            blocks.append(HeadingBlock(2, stripped))
+            i += 1
+            continue
+        if _CN_H3_RE.match(stripped):
+            blocks.append(HeadingBlock(3, stripped))
+            i += 1
+            continue
+
+        # 6) 分隔线
+        if _HR_RE.match(stripped):
+            blocks.append(HrBlock())
+            i += 1
+            continue
+
+        # 7) 引用块 > ...
+        if stripped.startswith('>'):
+            quote_lines: List[str] = []
+            while i < n:
+                line = lines[i].strip()
+                if line.startswith('>'):
+                    quote_lines.append(_QUOTE_RE.sub(r'\1', line))
+                    i += 1
+                else:
+                    break
+            blocks.append(QuoteBlock('\n'.join(quote_lines).strip()))
+            continue
+
+        # 8) 无序列表 - / * / +
+        m = _UL_RE.match(stripped)
+        if m:
+            while i < n:
+                line = lines[i].strip()
+                lm = _UL_RE.match(line)
+                if lm:
+                    blocks.append(ListItemBlock(False, lm.group(2).strip(), marker=lm.group(1)))
+                    i += 1
+                elif line and not line.startswith(('- ', '* ', '+ ')) and not _OL_RE.match(line):
+                    # 列表项的续行（缩进或同段延续）
+                    if line[0] in ('-', '*', '+'):
+                        break
+                    # 续行追加到上一个列表项
+                    if blocks and isinstance(blocks[-1], ListItemBlock):
+                        blocks[-1].text += ' ' + line
+                        i += 1
+                        continue
+                    else:
+                        break
+                else:
+                    break
+            continue
+
+        # 9) 有序列表 1. / 1)
+        m = _OL_RE.match(stripped)
+        if m:
+            idx = 1
+            while i < n:
+                line = lines[i].strip()
+                lm = _OL_RE.match(line)
+                if lm:
+                    try:
+                        idx = int(lm.group(1))
+                    except ValueError:
+                        idx += 1
+                    blocks.append(ListItemBlock(True, lm.group(2).strip(), index=idx))
+                    idx += 1
+                    i += 1
+                elif line and not _UL_RE.match(line) and not line.startswith(('- ', '* ', '+ ')):
+                    if blocks and isinstance(blocks[-1], ListItemBlock):
+                        blocks[-1].text += ' ' + line
+                        i += 1
+                        continue
+                    else:
+                        break
+                else:
+                    break
+            continue
+
+        # 10) 普通段落：合并连续非空行
+        para_lines = [stripped]
+        i += 1
+        while i < n:
+            line = lines[i]
+            s = line.strip()
+            if not s:
+                break
+            # 遇到特殊块起始则停止
+            if (s.startswith('#') or s.startswith('|') or s.startswith('```')
+                    or s.startswith('>') or _HR_RE.match(s)
+                    or _UL_RE.match(s) or _OL_RE.match(s)
+                    or _CN_CHAPTER_RE.match(s) or _CN_H2_RE.match(s) or _CN_H3_RE.match(s)):
+                break
+            para_lines.append(s)
+            i += 1
+        blocks.append(ParagraphBlock(' '.join(para_lines)))
+
+    return blocks
+
+
+def _parse_table(table_lines: List[str]) -> Tuple[List[str], List[List[str]]]:
+    """解析 Markdown 表格行 → (header, rows)"""
+    def split_row(line: str) -> List[str]:
+        s = line.strip()
+        if s.startswith('|'):
+            s = s[1:]
+        if s.endswith('|'):
+            s = s[:-1]
+        return [c.strip() for c in s.split('|')]
+
+    if len(table_lines) < 2:
+        return [], []
+
+    header = split_row(table_lines[0])
+    rows: List[List[str]] = []
+    for line in table_lines[2:]:  # 跳过分隔行
+        if _TABLE_SEP_RE.match(line.strip()):
+            continue
+        rows.append(split_row(line))
+    return header, rows
+
+
+# =============================================================================
+# 2. 行内 Markdown 渲染（粗体 / 斜体 / 行内代码 / 链接）
+# =============================================================================
+
+# 匹配顺序很重要：先 `code`，再 **bold**，再 *italic*，再 [text](url)
+_INLINE_TOKEN_RE = re.compile(
+    r'(?P<code>`[^`]+?`)'
+    r'|(?P<bold>\*\*[^*]+?\*\*)'
+    r'|(?P<italic>\*[^*]+?\*)'
+    r'|(?P<link>\[[^\]]+?\]\([^)]+?\))'
+)
+
+
+def split_inline(text: str) -> List[Tuple[str, str]]:
+    """将一段含行内 Markdown 标记的文本拆分为 [(kind, content), ...]
+
+    kind ∈ {'text', 'bold', 'italic', 'code', 'link'}
+    link 的 content 为 (label, url) 元组；其它为字符串。
+    """
+    tokens: List[Tuple[str, str]] = []
+    pos = 0
+    for m in _INLINE_TOKEN_RE.finditer(text):
+        if m.start() > pos:
+            tokens.append(('text', text[pos:m.start()]))
+        if m.group('code'):
+            tokens.append(('code', m.group('code')[1:-1]))
+        elif m.group('bold'):
+            tokens.append(('bold', m.group('bold')[2:-2]))
+        elif m.group('italic'):
+            tokens.append(('italic', m.group('italic')[1:-1]))
+        elif m.group('link'):
+            inner = m.group('link')
+            label_m = re.match(r'\[([^\]]+)\]\(([^)]+)\)', inner)
+            if label_m:
+                tokens.append(('link', (label_m.group(1), label_m.group(2))))
+            else:
+                tokens.append(('text', inner))
+        pos = m.end()
+    if pos < len(text):
+        tokens.append(('text', text[pos:]))
+    return tokens
+
+
+def strip_markdown_inline(text: str) -> str:
+    """去掉所有行内 Markdown 标记，返回纯文本（用于代码块、表头等场景）"""
+    def _repl(m: re.Match) -> str:
+        if m.group('code'):
+            return m.group('code')[1:-1]
+        if m.group('bold'):
+            return m.group('bold')[2:-2]
+        if m.group('italic'):
+            return m.group('italic')[1:-1]
+        if m.group('link'):
+            inner = m.group('link')
+            label_m = re.match(r'\[([^\]]+)\]\(([^)]+)\)', inner)
+            return label_m.group(1) if label_m else inner
+        return m.group(0)
+
+    return _INLINE_TOKEN_RE.sub(_repl, text)
+
+
+# =============================================================================
+# 3. Word (.docx) 导出
+# =============================================================================
+
+def generate_chat_docx_bytes(
+    messages: List[Dict[str, Any]],
+    session_id: str,
+    agent_name: str = '',
+) -> bytes:
+    """生成对话导出 Word 文档（bytes）
+
+    Args:
+        messages: [{"role": "user"/"assistant", "content": "..."}]
+        session_id: 会话 ID
+        agent_name: 智能体名称（用于标题）
+
+    Returns:
+        .docx 文件的二进制内容
+    """
+    from docx import Document
+    from docx.shared import Pt, Cm, RGBColor
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.enum.table import WD_TABLE_ALIGNMENT, WD_ALIGN_VERTICAL
+    from docx.oxml.ns import qn
+    from docx.oxml import OxmlElement
+
+    doc = Document()
+
+    # ===== 页面 & 默认字体 =====
+    for section in doc.sections:
+        section.top_margin = Cm(2.0)
+        section.bottom_margin = Cm(2.0)
+        section.left_margin = Cm(2.5)
+        section.right_margin = Cm(2.5)
+
+    style = doc.styles['Normal']
+    style.font.name = '宋体'
+    style.font.size = Pt(11)
+    style.element.rPr.rFonts.set(qn('w:eastAsia'), '宋体')
+    pf = style.paragraph_format
+    pf.space_before = Pt(3)
+    pf.space_after = Pt(3)
+    pf.line_spacing = 1.15
+
+    # 标题样式
+    for level in range(1, 5):
+        hname = f'Heading {level}'
+        if hname in doc.styles:
+            hs = doc.styles[hname]
+            hs.font.name = '宋体'
+            hs.element.rPr.rFonts.set(qn('w:eastAsia'), '宋体')
+            hs.paragraph_format.space_before = Pt(12 if level <= 2 else 8)
+            hs.paragraph_format.space_after = Pt(4)
+
+    # 文档主标题
+    display_title = f"{agent_name} 对话记录" if agent_name else "东风科技研发智能体 对话记录"
+    h = doc.add_heading(display_title, level=1)
+    h.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+    info = doc.add_paragraph()
+    info.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    info_run = info.add_run(f"Session: {session_id[:12] if session_id else ''}")
+    info_run.font.size = Pt(9)
+    info_run.font.color.rgb = RGBColor(128, 128, 128)
+    doc.add_paragraph()
+
+    USER_COLOR = RGBColor(33, 33, 33)
+    ASST_COLOR = RGBColor(25, 118, 210)
+    CODE_BG = 'F2F2F2'
+    TABLE_HEADER_BG = 'D9E2F3'
+    QUOTE_BG = 'FFF8E1'
+
+    def _set_run_font(run, size_pt=11, bold=False, italic=False, color=None, mono=False):
+        run.font.size = Pt(size_pt)
+        run.bold = bold
+        run.italic = italic
+        if color is not None:
+            run.font.color.rgb = color
+        if mono:
+            run.font.name = 'Consolas'
+        else:
+            run.font.name = '宋体'
+            run.element.rPr.rFonts.set(qn('w:eastAsia'), '宋体')
+
+    def _add_inline_runs(p, text: str, size_pt=11, mono=False):
+        """将含行内 Markdown 的文本渲染为 Run 序列"""
+        for kind, content in split_inline(text):
+            if kind == 'text':
+                run = p.add_run(content)
+                _set_run_font(run, size_pt, mono=mono)
+            elif kind == 'bold':
+                run = p.add_run(content)
+                _set_run_font(run, size_pt, bold=True, mono=mono)
+            elif kind == 'italic':
+                run = p.add_run(content)
+                _set_run_font(run, size_pt, italic=True, mono=mono)
+            elif kind == 'code':
+                run = p.add_run(content)
+                _set_run_font(run, size_pt - 1, mono=True, color=RGBColor(0x9C, 0x27, 0xB0))
+            elif kind == 'link':
+                label, url = content
+                run = p.add_run(label)
+                _set_run_font(run, size_pt, color=RGBColor(0x19, 0x76, 0xD2))
+                run.font.underline = True
+
+    def _shade(cell, fill: str):
+        tcPr = cell._tc.get_or_add_tcPr()
+        shd = OxmlElement('w:shd')
+        shd.set(qn('w:fill'), fill)
+        shd.set(qn('w:val'), 'clear')
+        tcPr.append(shd)
+
+    def _add_table(header: List[str], rows: List[List[str]]):
+        num_cols = max(len(header), max((len(r) for r in rows), default=0), 1)
+        # 补齐
+        header = header + [''] * (num_cols - len(header))
+        rows = [r + [''] * (num_cols - len(r)) for r in rows]
+        num_rows = len(rows) + 1
+
+        table = doc.add_table(rows=num_rows, cols=num_cols)
+        table.style = 'Table Grid'
+        table.alignment = WD_TABLE_ALIGNMENT.CENTER
+
+        # 智能列宽（按内容长度加权）
+        col_max_lens = [0] * num_cols
+        for c_idx, c in enumerate(header):
+            col_max_lens[c_idx] = max(col_max_lens[c_idx], len(c))
+        for r in rows:
+            for c_idx, c in enumerate(r):
+                col_max_lens[c_idx] = max(col_max_lens[c_idx], len(c))
+        total_chars = max(sum(col_max_lens), 1)
+        # 16cm ≈ 9072 dxa
+        col_widths = [max(int(9072 * (l / total_chars)), 567) for l in col_max_lens]
+        # 归一化到 9072
+        scale = 9072 / sum(col_widths)
+        col_widths = [int(w * scale) for w in col_widths]
+
+        # 应用列宽
+        tbl = table._tbl
+        tblGrid = tbl.find(qn('w:tblGrid'))
+        if tblGrid is not None:
+            for gc in tblGrid.findall(qn('w:gridCol')):
+                tblGrid.remove(gc)
+            for w in col_widths:
+                gc = OxmlElement('w:gridCol')
+                gc.set(qn('w:w'), str(w))
+                tblGrid.append(gc)
+
+        # 表头
+        for c_idx, cell_text in enumerate(header):
+            cell = table.cell(0, c_idx)
+            cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
+            _shade(cell, TABLE_HEADER_BG)
+            p = cell.paragraphs[0]
+            p.paragraph_format.space_before = Pt(1)
+            p.paragraph_format.space_after = Pt(1)
+            run = p.add_run(strip_markdown_inline(cell_text))
+            _set_run_font(run, 10, bold=True)
+
+        # 数据行
+        for r_idx, row in enumerate(rows, start=1):
+            for c_idx, cell_text in enumerate(row):
+                cell = table.cell(r_idx, c_idx)
+                cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
+                p = cell.paragraphs[0]
+                p.paragraph_format.space_before = Pt(1)
+                p.paragraph_format.space_after = Pt(1)
+                _add_inline_runs(p, cell_text, size_pt=10)
+
+        # 表格后空段
+        sp = doc.add_paragraph('')
+        sp.paragraph_format.space_before = Pt(2)
+        sp.paragraph_format.space_after = Pt(2)
+
+    def _add_code_block(code: str):
+        # 单元格 1x1 模拟代码块（带浅灰背景）
+        table = doc.add_table(rows=1, cols=1)
+        table.style = 'Table Grid'
+        cell = table.cell(0, 0)
+        _shade(cell, CODE_BG)
+        # 清空默认空段
+        cell.text = ''
+        for line_idx, line in enumerate(code.split('\n')):
+            if line_idx == 0:
+                p = cell.paragraphs[0]
+            else:
+                p = cell.add_paragraph()
+            p.paragraph_format.space_before = Pt(0)
+            p.paragraph_format.space_after = Pt(0)
+            p.paragraph_format.line_spacing = 1.0
+            run = p.add_run(line if line else ' ')
+            _set_run_font(run, 9, mono=True)
+        sp = doc.add_paragraph('')
+        sp.paragraph_format.space_before = Pt(2)
+        sp.paragraph_format.space_after = Pt(2)
+
+    def _add_quote_block(text: str):
+        table = doc.add_table(rows=1, cols=1)
+        table.style = 'Table Grid'
+        cell = table.cell(0, 0)
+        _shade(cell, QUOTE_BG)
+        cell.text = ''
+        for idx, line in enumerate(text.split('\n')):
+            if idx == 0:
+                p = cell.paragraphs[0]
+            else:
+                p = cell.add_paragraph()
+            _add_inline_runs(p, line, size_pt=11)
+            for run in p.runs:
+                run.italic = True
+        sp = doc.add_paragraph('')
+        sp.paragraph_format.space_before = Pt(2)
+        sp.paragraph_format.space_after = Pt(2)
+
+    def _render_blocks(blocks: List[Block]):
+        for blk in blocks:
+            if isinstance(blk, HeadingBlock):
+                level = min(blk.level, 4)
+                h = doc.add_heading(strip_markdown_inline(blk.text), level=level)
+            elif isinstance(blk, ParagraphBlock):
+                p = doc.add_paragraph()
+                _add_inline_runs(p, blk.text, size_pt=11)
+            elif isinstance(blk, ListItemBlock):
+                style_name = 'List Number' if blk.ordered else 'List Bullet'
+                try:
+                    p = doc.add_paragraph(style=style_name)
+                except KeyError:
+                    p = doc.add_paragraph()
+                    p.add_run(('• ' if not blk.ordered else f'{blk.index}. '))
+                _add_inline_runs(p, strip_markdown_inline(blk.text), size_pt=11)
+            elif isinstance(blk, TableBlock):
+                _add_table(blk.header, blk.rows)
+            elif isinstance(blk, CodeBlock):
+                _add_code_block(blk.code)
+            elif isinstance(blk, QuoteBlock):
+                _add_quote_block(blk.text)
+            elif isinstance(blk, HrBlock):
+                p = doc.add_paragraph('─' * 40)
+                p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+    # ===== 逐条消息渲染 =====
+    for msg in messages:
+        role = msg.get('role', 'assistant')
+        content = msg.get('content', '') or ''
+        role_label = '用户' if role == 'user' else '助手'
+
+        # 角色标签
+        rp = doc.add_paragraph()
+        rr = rp.add_run(f'{role_label}：')
+        rr.bold = True
+        rr.font.size = Pt(11)
+        rr.font.color.rgb = USER_COLOR if role == 'user' else ASST_COLOR
+        rr.font.name = '宋体'
+        rr.element.rPr.rFonts.set(qn('w:eastAsia'), '宋体')
+
+        # 解析 markdown 并渲染
+        try:
+            blocks = parse_markdown(content)
+            if not blocks:
+                # 纯文本兜底
+                p = doc.add_paragraph(content)
+                for run in p.runs:
+                    _set_run_font(run, 10)
+            else:
+                _render_blocks(blocks)
+        except Exception as e:
+            logger.warning(f'[导出 Word] 解析消息失败，降级为纯文本: {e}')
+            p = doc.add_paragraph(content)
+            for run in p.runs:
+                _set_run_font(run, 10)
+
+        # 分隔线
+        sep = doc.add_paragraph('─' * 40)
+        sep.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+    buf = BytesIO()
+    doc.save(buf)
+    buf.seek(0)
+    return buf.getvalue()
+
+
+# =============================================================================
+# 4. PowerPoint (.pptx) 导出
+# =============================================================================
+
+def generate_chat_pptx_bytes(
+    messages: List[Dict[str, Any]],
+    session_id: str,
+    agent_name: str = '',
+) -> bytes:
+    """生成对话导出 PPT（bytes）
+
+    策略：
+    - 封面幻灯片：标题 + Session ID + 导出时间
+    - 每条用户消息 → 1 张幻灯片（标题：用户提问）
+    - 每条助手消息 → 按顶级 H1/H2 切分多张幻灯片；若无标题则按内容长度切分
+    - 表格 → 原生 PPT Table
+    - 列表 → 项目符号
+    - 代码块 → 等宽文本框
+    """
+    from pptx import Presentation
+    from pptx.util import Inches, Pt, Emu
+    from pptx.dml.color import RGBColor
+    from pptx.enum.text import PP_ALIGN, MSO_ANCHOR
+
+    prs = Presentation()
+    # 16:9
+    prs.slide_width = Inches(13.333)
+    prs.slide_height = Inches(7.5)
+
+    # 颜色
+    PRIMARY = RGBColor(0x19, 0x76, 0xD2)
+    USER_BG = RGBColor(0xF5, 0xF5, 0xF5)
+    ASST_BG = RGBColor(0xE3, 0xF2, 0xFD)
+    CODE_BG = RGBColor(0xF2, 0xF2, 0xF2)
+    TABLE_HEADER_BG = RGBColor(0xD9, 0xE2, 0xF3)
+    DARK = RGBColor(0x21, 0x21, 0x21)
+    GRAY = RGBColor(0x66, 0x66, 0x66)
+
+    BLANK_LAYOUT = prs.slide_layouts[6]  # 空白布局
+
+    def _add_textbox(slide, left, top, width, height, anchor=MSO_ANCHOR.TOP):
+        txBox = slide.shapes.add_textbox(left, top, width, height)
+        tf = txBox.text_frame
+        tf.word_wrap = True
+        tf.vertical_anchor = anchor
+        return tf
+
+    def _set_run(run, text, size=14, bold=False, italic=False, color=DARK, mono=False):
+        run.text = text
+        run.font.size = Pt(size)
+        run.font.bold = bold
+        run.font.italic = italic
+        run.font.color.rgb = color
+        run.font.name = 'Consolas' if mono else '微软雅黑'
+
+    def _add_inline_to_paragraph(p, text: str, size=14, mono=False):
+        """将行内 Markdown 渲染到 PPT 段落（第一段已存在）"""
+        first = True
+        for kind, content in split_inline(text):
+            if first:
+                run = p.runs[0] if p.runs else p.add_run()
+                if not p.runs[0].text:
+                    first = False
+                else:
+                    run = p.add_run()
+                    first = False
+            else:
+                run = p.add_run()
+
+            if kind == 'text':
+                _set_run(run, content, size=size, mono=mono)
+            elif kind == 'bold':
+                _set_run(run, content, size=size, bold=True, mono=mono)
+            elif kind == 'italic':
+                _set_run(run, content, size=size, italic=True, mono=mono)
+            elif kind == 'code':
+                _set_run(run, content, size=size - 1, mono=True, color=RGBColor(0x9C, 0x27, 0xB0))
+            elif kind == 'link':
+                label, _url = content
+                _set_run(run, label, size=size, color=PRIMARY)
+
+    def _add_paragraph_with_inline(tf, text: str, size=14, bullet=False, level=0, mono=False, first=False):
+        if first and len(tf.paragraphs) == 1 and not tf.paragraphs[0].runs:
+            p = tf.paragraphs[0]
+        else:
+            p = tf.add_paragraph()
+        p.level = level
+        # 先放一个空 run，再追加
+        p.add_run()
+        _add_inline_to_paragraph(p, text, size=size, mono=mono)
+        if bullet:
+            _set_paragraph_bullet(p)
+        return p
+
+    def _set_paragraph_bullet(p):
+        """给段落加项目符号（通过 XML 直接设置）"""
+        from pptx.oxml.ns import qn
+        from lxml import etree
+        pPr = p._pPr if p._pPr is not None else p._p.get_or_add_pPr()
+        # 移除已有 buNone
+        for tag in ('a:buNone', 'a:buChar', 'a:buAutoNum'):
+            for el in pPr.findall(qn(tag)):
+                pPr.remove(el)
+        buChar = etree.SubElement(pPr, qn('a:buChar'))
+        buChar.set('char', '•')
+
+    def _add_title_bar(slide, title: str, subtitle: str = ''):
+        # 顶部色条
+        bar = slide.shapes.add_shape(
+            1,  # MSO_SHAPE.RECTANGLE
+            Inches(0), Inches(0), prs.slide_width, Inches(1.0)
+        )
+        bar.fill.solid()
+        bar.fill.fore_color.rgb = PRIMARY
+        bar.line.fill.background()
+
+        tf = _add_textbox(slide, Inches(0.5), Inches(0.15), Inches(12.3), Inches(0.7),
+                          anchor=MSO_ANCHOR.MIDDLE)
+        p = tf.paragraphs[0]
+        p.alignment = PP_ALIGN.LEFT
+        _set_run(p.add_run(), title, size=24, bold=True, color=RGBColor(0xFF, 0xFF, 0xFF))
+
+        if subtitle:
+            sub_tf = _add_textbox(slide, Inches(0.5), Inches(1.1), Inches(12.3), Inches(0.4))
+            sp = sub_tf.paragraphs[0]
+            _set_run(sp.add_run(), subtitle, size=12, color=GRAY)
+
+    def _add_table_shape(slide, header: List[str], rows: List[List[str]],
+                         left=Inches(0.6), top=Inches(1.7),
+                         width=Inches(12.1), height=Inches(5.0)):
+        num_cols = max(len(header), max((len(r) for r in rows), default=0), 1)
+        header = header + [''] * (num_cols - len(header))
+        rows = [r + [''] * (num_cols - len(r)) for r in rows]
+        num_rows = len(rows) + 1
+
+        table_shape = slide.shapes.add_table(num_rows, num_cols, left, top, width, height)
+        table = table_shape.table
+
+        # 列宽：按字符长度加权
+        col_max_lens = [0] * num_cols
+        for c_idx, c in enumerate(header):
+            col_max_lens[c_idx] = max(col_max_lens[c_idx], len(c))
+        for r in rows:
+            for c_idx, c in enumerate(r):
+                col_max_lens[c_idx] = max(col_max_lens[c_idx], len(c))
+        total_chars = max(sum(col_max_lens), 1)
+        for c_idx in range(num_cols):
+            table.columns[c_idx].width = Emu(int(int(width) * (col_max_lens[c_idx] / total_chars)))
+
+        # 表头
+        for c_idx, cell_text in enumerate(header):
+            cell = table.cell(0, c_idx)
+            cell.fill.solid()
+            cell.fill.fore_color.rgb = TABLE_HEADER_BG
+            cell.vertical_anchor = MSO_ANCHOR.MIDDLE
+            cell.margin_top = Pt(4)
+            cell.margin_bottom = Pt(4)
+            tf = cell.text_frame
+            tf.word_wrap = True
+            p = tf.paragraphs[0]
+            p.alignment = PP_ALIGN.CENTER
+            _set_run(p.add_run(), strip_markdown_inline(cell_text), size=12, bold=True)
+
+        # 数据行
+        for r_idx, row in enumerate(rows, start=1):
+            for c_idx, cell_text in enumerate(row):
+                cell = table.cell(r_idx, c_idx)
+                cell.vertical_anchor = MSO_ANCHOR.MIDDLE
+                cell.margin_top = Pt(3)
+                cell.margin_bottom = Pt(3)
+                tf = cell.text_frame
+                tf.word_wrap = True
+                p = tf.paragraphs[0]
+                _add_inline_to_paragraph(p, cell_text, size=11)
+
+    def _add_code_shape(slide, code: str, top=Inches(1.7)):
+        txBox = slide.shapes.add_textbox(Inches(0.6), top, Inches(12.1), Inches(5.0))
+        # 背景
+        txBox.fill.solid()
+        txBox.fill.fore_color.rgb = CODE_BG
+        txBox.line.color.rgb = RGBColor(0xCC, 0xCC, 0xCC)
+        tf = txBox.text_frame
+        tf.word_wrap = True
+        first = True
+        for line in code.split('\n'):
+            if first:
+                p = tf.paragraphs[0]
+                first = False
+            else:
+                p = tf.add_paragraph()
+            _set_run(p.add_run(), line if line else ' ', size=11, mono=True,
+                     color=RGBColor(0x21, 0x21, 0x21))
+
+    # ===== 封面 =====
+    cover = prs.slides.add_slide(BLANK_LAYOUT)
+    # 大色块
+    bar = cover.shapes.add_shape(1, Inches(0), Inches(0), prs.slide_width, prs.slide_height)
+    bar.fill.solid()
+    bar.fill.fore_color.rgb = PRIMARY
+    bar.line.fill.background()
+
+    tf = _add_textbox(cover, Inches(1), Inches(2.3), Inches(11.3), Inches(2.0),
+                      anchor=MSO_ANCHOR.MIDDLE)
+    p = tf.paragraphs[0]
+    p.alignment = PP_ALIGN.CENTER
+    display_title = f"{agent_name} 对话记录" if agent_name else "东风科技研发智能体 对话记录"
+    _set_run(p.add_run(), display_title, size=44, bold=True, color=RGBColor(0xFF, 0xFF, 0xFF))
+
+    sub_tf = _add_textbox(cover, Inches(1), Inches(4.3), Inches(11.3), Inches(0.6))
+    sp = sub_tf.paragraphs[0]
+    sp.alignment = PP_ALIGN.CENTER
+    _set_run(sp.add_run(), f"Session: {session_id[:12] if session_id else ''}",
+             size=18, color=RGBColor(0xE3, 0xF2, 0xFD))
+
+    # ===== 切分助手消息为多张幻灯片 =====
+    def _split_blocks_into_slides(blocks: List[Block]) -> List[List[Block]]:
+        """按顶级标题（H1/H2）切分块列表为多组"""
+        if not blocks:
+            return []
+        groups: List[List[Block]] = []
+        current: List[Block] = []
+        for blk in blocks:
+            if isinstance(blk, HeadingBlock) and blk.level <= 2:
+                if current:
+                    groups.append(current)
+                current = [blk]
+            else:
+                current.append(blk)
+        if current:
+            groups.append(current)
+        return groups
+
+    def _render_blocks_to_slide(slide, blocks: List[Block], top=Inches(1.7)):
+        """把一组 block 渲染到一张幻灯片"""
+        # 用一个大文本框承载非表格、非代码块内容；表格和代码块单独绘图
+        # 为简化布局：先按顺序绘制，文本块聚合到一个文本框
+        text_blocks = [b for b in blocks if not isinstance(b, (TableBlock, CodeBlock))]
+        special_blocks = [(idx, b) for idx, b in enumerate(blocks)
+                          if isinstance(b, (TableBlock, CodeBlock))]
+
+        # 顶部文本框（占上半部分），底部留给表格/代码
+        if text_blocks and not special_blocks:
+            # 全文本
+            txBox = slide.shapes.add_textbox(Inches(0.6), top, Inches(12.1), Inches(5.4))
+            tf = txBox.text_frame
+            tf.word_wrap = True
+            first = True
+            for blk in text_blocks:
+                if isinstance(blk, HeadingBlock):
+                    p = tf.paragraphs[0] if first else tf.add_paragraph()
+                    first = False
+                    p.add_run()
+                    _add_inline_to_paragraph(p, strip_markdown_inline(blk.text), size=20, mono=False)
+                    for r in p.runs:
+                        r.font.bold = True
+                        r.font.color.rgb = PRIMARY
+                elif isinstance(blk, ParagraphBlock):
+                    p = tf.paragraphs[0] if first else tf.add_paragraph()
+                    first = False
+                    p.add_run()
+                    _add_inline_to_paragraph(p, blk.text, size=15)
+                elif isinstance(blk, ListItemBlock):
+                    p = tf.add_paragraph() if not first else tf.paragraphs[0]
+                    first = False
+                    p.add_run()
+                    prefix = f"{blk.index}. " if blk.ordered else "• "
+                    _add_inline_to_paragraph(p, prefix + strip_markdown_inline(blk.text), size=14)
+                    if not blk.ordered:
+                        _set_paragraph_bullet(p)
+                elif isinstance(blk, QuoteBlock):
+                    p = tf.add_paragraph() if not first else tf.paragraphs[0]
+                    first = False
+                    p.add_run()
+                    _add_inline_to_paragraph(p, strip_markdown_inline(blk.text), size=14)
+                    for r in p.runs:
+                        r.font.italic = True
+                        r.font.color.rgb = GRAY
+                elif isinstance(blk, HrBlock):
+                    p = tf.add_paragraph() if not first else tf.paragraphs[0]
+                    first = False
+                    _set_run(p.add_run(), '─' * 40, size=10, color=GRAY)
+        else:
+            # 混合：先文本（上），再表格/代码（下）
+            if text_blocks:
+                txBox = slide.shapes.add_textbox(Inches(0.6), top, Inches(12.1), Inches(2.5))
+                tf = txBox.text_frame
+                tf.word_wrap = True
+                first = True
+                for blk in text_blocks:
+                    if isinstance(blk, HeadingBlock):
+                        p = tf.paragraphs[0] if first else tf.add_paragraph()
+                        first = False
+                        p.add_run()
+                        _add_inline_to_paragraph(p, strip_markdown_inline(blk.text), size=18)
+                        for r in p.runs:
+                            r.font.bold = True
+                            r.font.color.rgb = PRIMARY
+                    elif isinstance(blk, ParagraphBlock):
+                        p = tf.paragraphs[0] if first else tf.add_paragraph()
+                        first = False
+                        p.add_run()
+                        _add_inline_to_paragraph(p, blk.text, size=13)
+                    elif isinstance(blk, ListItemBlock):
+                        p = tf.add_paragraph() if not first else tf.paragraphs[0]
+                        first = False
+                        p.add_run()
+                        prefix = f"{blk.index}. " if blk.ordered else "• "
+                        _add_inline_to_paragraph(p, prefix + strip_markdown_inline(blk.text), size=13)
+                        if not blk.ordered:
+                            _set_paragraph_bullet(p)
+
+            # 特殊块依次绘制
+            cur_top = Inches(4.3) if text_blocks else top
+            for _idx, blk in special_blocks:
+                if isinstance(blk, TableBlock):
+                    _add_table_shape(slide, blk.header, blk.rows, top=cur_top,
+                                     height=Inches(2.6))
+                    cur_top = Inches(cur_top.inches + 2.7)
+                elif isinstance(blk, CodeBlock):
+                    _add_code_shape(slide, blk.code, top=cur_top)
+                    cur_top = Inches(cur_top.inches + 2.5)
+
+    # ===== 逐条消息 → 幻灯片 =====
+    for msg in messages:
+        role = msg.get('role', 'assistant')
+        content = msg.get('content', '') or ''
+        role_label = '用户提问' if role == 'user' else '助手回答'
+
+        try:
+            blocks = parse_markdown(content)
+        except Exception as e:
+            logger.warning(f'[导出 PPT] 解析消息失败，降级为纯文本: {e}')
+            blocks = [ParagraphBlock(content)]
+
+        if not blocks:
+            blocks = [ParagraphBlock('(空)')]
+
+        if role == 'user':
+            # 用户消息：1 张幻灯片
+            slide = prs.slides.add_slide(BLANK_LAYOUT)
+            _add_title_bar(slide, '🧑 用户提问', subtitle=f'Session: {session_id[:12] if session_id else ""}')
+            txBox = slide.shapes.add_textbox(Inches(0.6), Inches(1.7), Inches(12.1), Inches(5.4))
+            txBox.fill.solid()
+            txBox.fill.fore_color.rgb = USER_BG
+            txBox.line.color.rgb = RGBColor(0xDD, 0xDD, 0xDD)
+            tf = txBox.text_frame
+            tf.word_wrap = True
+            for idx, blk in enumerate(blocks):
+                if idx == 0:
+                    p = tf.paragraphs[0]
+                else:
+                    p = tf.add_paragraph()
+                p.add_run()
+                if isinstance(blk, (ParagraphBlock, HeadingBlock)):
+                    _add_inline_to_paragraph(p, strip_markdown_inline(blk.text), size=18)
+                elif isinstance(blk, ListItemBlock):
+                    prefix = f"{blk.index}. " if blk.ordered else "• "
+                    _add_inline_to_paragraph(p, prefix + strip_markdown_inline(blk.text), size=16)
+                elif isinstance(blk, TableBlock):
+                    # 用户消息中的表格直接渲染
+                    _add_table_shape(slide, blk.header, blk.rows)
+                else:
+                    _add_inline_to_paragraph(p, strip_markdown_inline(str(getattr(blk, 'text', ''))), size=16)
+        else:
+            # 助手消息：按 H1/H2 切分
+            groups = _split_blocks_into_slides(blocks)
+            if not groups:
+                groups = [blocks]
+            for grp_idx, grp in enumerate(groups):
+                slide = prs.slides.add_slide(BLANK_LAYOUT)
+                # 第一块的标题作为幻灯片标题
+                first_blk = grp[0] if grp else None
+                if isinstance(first_blk, HeadingBlock):
+                    slide_title = strip_markdown_inline(first_blk.text)
+                    subtitle = f'🤖 助手回答 · 第 {grp_idx + 1}/{len(groups)} 部分'
+                    # 标题块已经渲染到内容里，保留
+                    slide_blocks = grp
+                else:
+                    slide_title = f'🤖 助手回答' + (f' · 第 {grp_idx + 1}/{len(groups)} 部分' if len(groups) > 1 else '')
+                    subtitle = f'Session: {session_id[:12] if session_id else ""}'
+                    slide_blocks = grp
+
+                _add_title_bar(slide, slide_title, subtitle=subtitle)
+                _render_blocks_to_slide(slide, slide_blocks)
+
+    buf = BytesIO()
+    prs.save(buf)
+    buf.seek(0)
+    return buf.getvalue()
+
+
+# =============================================================================
+# 5. PDF 导出（复用 markdown 解析，表格用 reportlab Table 渲染）
+# =============================================================================
+
+def generate_chat_pdf_bytes(
+    messages: List[Dict[str, Any]],
+    session_id: str,
+    agent_name: str = '',
+) -> bytes:
+    """生成对话导出 PDF（bytes）—— 同样解析 Markdown，避免输出 |---|---| 文本"""
+    try:
+        return _generate_pdf_reportlab(messages, session_id, agent_name)
+    except Exception as e:
+        logger.warning(f'[导出 PDF] reportlab 生成失败: {e}，回退到 pdf_generator.generate_chat_pdf')
+        from app.utils.pdf_generator import generate_chat_pdf
+        return generate_chat_pdf(messages, session_id, agent_name=agent_name)
+
+
+def _generate_pdf_reportlab(messages, session_id, agent_name) -> bytes:
+    from reportlab.platypus import (SimpleDocTemplate, Paragraph, Spacer, HRFlowable,
+                                     Table as RLTable, TableStyle, Preformatted, KeepTogether)
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import ParagraphStyle
+    from reportlab.lib.units import mm
+    from reportlab.lib.colors import HexColor
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.ttfonts import TTFont
+    from reportlab.lib.enums import TA_CENTER, TA_LEFT
+
+    # 寻找中文字体
+    from app.utils.pdf_generator import find_chinese_font, _strip_emoji
+    font_path = find_chinese_font()
+    if not font_path:
+        raise RuntimeError('未找到中文字体')
+    font_name = 'ChineseFont'
+    try:
+        pdfmetrics.registerFont(TTFont(font_name, font_path))
+    except Exception:
+        # 已注册则忽略
+        pass
+
+    title_style = ParagraphStyle('Title', fontName=font_name, fontSize=16, leading=22,
+                                  alignment=TA_CENTER, spaceAfter=4 * mm)
+    info_style = ParagraphStyle('Info', fontName=font_name, fontSize=9, leading=13,
+                                 alignment=TA_CENTER, textColor=HexColor('#888888'), spaceAfter=8 * mm)
+    role_user_style = ParagraphStyle('RoleUser', fontName=font_name, fontSize=11, leading=16,
+                                      textColor=HexColor('#1a1a1a'), spaceAfter=2 * mm)
+    role_asst_style = ParagraphStyle('RoleAsst', fontName=font_name, fontSize=11, leading=16,
+                                      textColor=HexColor('#1976D2'), spaceAfter=2 * mm)
+    body_style = ParagraphStyle('Body', fontName=font_name, fontSize=10, leading=14, spaceAfter=2 * mm)
+    heading_style_2 = ParagraphStyle('H2', fontName=font_name, fontSize=14, leading=20,
+                                      textColor=HexColor('#1976D2'), spaceBefore=4 * mm, spaceAfter=2 * mm)
+    heading_style_3 = ParagraphStyle('H3', fontName=font_name, fontSize=12, leading=18,
+                                      textColor=HexColor('#1976D2'), spaceBefore=3 * mm, spaceAfter=1.5 * mm)
+    code_style = ParagraphStyle('Code', fontName='Courier', fontSize=9, leading=12,
+                                 leftIndent=4 * mm, spaceAfter=2 * mm,
+                                 backColor=HexColor('#F2F2F2'))
+    quote_style = ParagraphStyle('Quote', fontName=font_name, fontSize=10, leading=14,
+                                  leftIndent=6 * mm, textColor=HexColor('#666666'),
+                                  spaceAfter=2 * mm)
+
+    def _esc(s: str) -> str:
+        return (s.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;'))
+
+    def _inline_to_html(text: str) -> str:
+        """将行内 Markdown 转 reportlab Paragraph 支持的简单 HTML"""
+        out = []
+        for kind, content in split_inline(text):
+            if kind == 'text':
+                out.append(_esc(content))
+            elif kind == 'bold':
+                out.append(f'<b>{_esc(content)}</b>')
+            elif kind == 'italic':
+                out.append(f'<i>{_esc(content)}</i>')
+            elif kind == 'code':
+                out.append(f'<font face="Courier" color="#9C27B0">{_esc(content)}</font>')
+            elif kind == 'link':
+                label, _url = content
+                out.append(f'<font color="#1976D2"><u>{_esc(label)}</u></font>')
+        return ''.join(out)
+
+    buf = BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=A4, topMargin=15 * mm, bottomMargin=15 * mm)
+    story = []
+
+    display_title = f"{agent_name} 对话记录" if agent_name else "东风科技研发智能体 对话记录"
+    story.append(Paragraph(_esc(display_title), title_style))
+    story.append(Paragraph(f"Session: {_esc(session_id[:12] if session_id else '')}", info_style))
+
+    for msg in messages:
+        role = msg.get('role', 'assistant')
+        content = msg.get('content', '') or ''
+        role_label = '用户' if role == 'user' else '助手'
+        content = _strip_emoji(content)
+
+        role_style = role_user_style if role == 'user' else role_asst_style
+        story.append(Paragraph(f'<b>{_esc(role_label)}：</b>', role_style))
+
+        try:
+            blocks = parse_markdown(content)
+        except Exception:
+            blocks = [ParagraphBlock(content)]
+
+        for blk in blocks:
+            if isinstance(blk, HeadingBlock):
+                hs = heading_style_2 if blk.level <= 2 else heading_style_3
+                story.append(Paragraph(_inline_to_html(strip_markdown_inline(blk.text)), hs))
+            elif isinstance(blk, ParagraphBlock):
+                story.append(Paragraph(_inline_to_html(blk.text), body_style))
+            elif isinstance(blk, ListItemBlock):
+                prefix = f'{blk.index}. ' if blk.ordered else '• '
+                story.append(Paragraph(f'{prefix}{_inline_to_html(strip_markdown_inline(blk.text))}',
+                                        ParagraphStyle('Li', parent=body_style, leftIndent=6 * mm)))
+            elif isinstance(blk, TableBlock):
+                header = blk.header
+                rows = blk.rows
+                if not header:
+                    continue
+                num_cols = max(len(header), max((len(r) for r in rows), default=0))
+                header = header + [''] * (num_cols - len(header))
+                rows = [r + [''] * (num_cols - len(r)) for r in rows]
+                data = [[Paragraph(_inline_to_html(strip_markdown_inline(c)), body_style) for c in header]]
+                for r in rows:
+                    data.append([Paragraph(_inline_to_html(strip_markdown_inline(c)), body_style) for c in r])
+                tbl = RLTable(data, repeatRows=1)
+                tbl.setStyle(TableStyle([
+                    ('BACKGROUND', (0, 0), (-1, 0), HexColor('#D9E2F3')),
+                    ('GRID', (0, 0), (-1, -1), 0.5, HexColor('#999999')),
+                    ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                    ('FONTSIZE', (0, 0), (-1, -1), 9),
+                    ('TOPPADDING', (0, 0), (-1, -1), 3),
+                    ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
+                ]))
+                story.append(KeepTogether(tbl))
+                story.append(Spacer(1, 2 * mm))
+            elif isinstance(blk, CodeBlock):
+                safe = _esc(blk.code)
+                story.append(Preformatted(safe, code_style))
+                story.append(Spacer(1, 2 * mm))
+            elif isinstance(blk, QuoteBlock):
+                story.append(Paragraph(f'<i>{_inline_to_html(strip_markdown_inline(blk.text))}</i>', quote_style))
+            elif isinstance(blk, HrBlock):
+                story.append(HRFlowable(width='100%', thickness=0.5, color=HexColor('#cccccc')))
+
+        story.append(Spacer(1, 2 * mm))
+        story.append(HRFlowable(width='100%', thickness=0.5, color=HexColor('#cccccc')))
+        story.append(Spacer(1, 2 * mm))
+
+    doc.build(story)
+    return buf.getvalue()

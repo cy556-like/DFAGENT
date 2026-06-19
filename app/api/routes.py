@@ -2470,11 +2470,15 @@ async def export_chat(session_id: str, format: str = "md", agent_name: str = "")
 
     """
 
-    导出对话为 Word(docx)、PDF 或 Markdown 格式
+    导出对话为 Word(docx)、PPT(pptx)、PDF 或 Markdown 格式
 
-    format: docx | pdf | md
+    format: docx | pptx | pdf | md
     agent_name: 当前智能体名称（用于文件名和标题）
 
+    说明：
+    - docx / pptx / pdf 都会先解析消息内容中的 Markdown，再渲染为对应格式的
+      原生元素（Word/PPT 表格、标题、列表、代码块等），避免出现 |---|---|
+      这样的纯文本残留。
     """
 
     # [BUG FIX] 使用 get_history_messages_from_file 强制从文件读取最新数据
@@ -2487,105 +2491,23 @@ async def export_chat(session_id: str, format: str = "md", agent_name: str = "")
 
 
 
+    # 安全文件名
+    from urllib.parse import quote
+    safe_name = agent_name.replace('/', '_').replace('\\', '_').replace('..', '_') if agent_name else f'chat_{session_id[:12]}'
+
     if format == "docx":
 
-        # Word (docx) 导出
-
+        # Word (docx) 导出 —— 解析 Markdown 后渲染为原生 Word 元素
         try:
-
-            from docx import Document
-
-            from docx.shared import Pt, Inches, RGBColor
-
-            from docx.enum.text import WD_ALIGN_PARAGRAPH
-
-            doc = Document()
-
-            # 标题
-
-            display_title = f"{agent_name} 对话记录" if agent_name else "东风科技研发智能体 对话记录"
-
-            title_para = doc.add_heading(display_title, level=1)
-
-            title_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
-
-            # 会话信息
-
-            info_para = doc.add_paragraph()
-
-            info_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
-
-            info_run = info_para.add_run(f"Session: {session_id[:12]}")
-
-            info_run.font.size = Pt(9)
-
-            info_run.font.color.rgb = RGBColor(128, 128, 128)
-
-            doc.add_paragraph()  # 空行
-
-
-
-            for msg in messages:
-
-                role = "用户" if msg["role"] == "user" else "助手"
-
-                content = msg.get("content", "")
-
-                # 角色标签
-
-                role_para = doc.add_paragraph()
-
-                role_run = role_para.add_run(f"{role}：")
-
-                role_run.bold = True
-
-                role_run.font.size = Pt(11)
-
-                if msg["role"] == "user":
-
-                    role_run.font.color.rgb = RGBColor(33, 33, 33)
-
-                else:
-
-                    role_run.font.color.rgb = RGBColor(25, 118, 210)
-
-                # 内容
-
-                content_para = doc.add_paragraph()
-
-                content_run = content_para.add_run(content)
-
-                content_run.font.size = Pt(10)
-
-                # 添加分隔线
-
-                doc.add_paragraph("─" * 40)
-
-
-
-            # 输出为 bytes
-
-            from io import BytesIO
-
-            buffer = BytesIO()
-
-            doc.save(buffer)
-
-            buffer.seek(0)
-
-            # 安全文件名
-
-            from urllib.parse import quote
-
-            safe_name = agent_name.replace('/', '_').replace('\\', '_').replace('..', '_') if agent_name else f'chat_{session_id[:12]}'
+            from app.utils.chat_export import generate_chat_docx_bytes
+            docx_bytes = generate_chat_docx_bytes(messages, session_id, agent_name=agent_name)
 
             filename = f"{safe_name}_对话记录.docx"
-
             encoded_filename = quote(filename)
 
             return Response(
 
-                content=buffer.read(),
+                content=docx_bytes,
 
                 media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
 
@@ -2599,23 +2521,50 @@ async def export_chat(session_id: str, format: str = "md", agent_name: str = "")
 
         except Exception as e:
 
+            logger.error(f"[导出 Word] 失败: {e}", exc_info=True)
             raise HTTPException(status_code=500, detail=f"Word 生成失败: {str(e)}")
+
+
+
+    elif format == "pptx":
+
+        # PowerPoint (pptx) 导出 —— 新增：解析 Markdown 后按章节切分多张幻灯片
+        try:
+            from app.utils.chat_export import generate_chat_pptx_bytes
+            pptx_bytes = generate_chat_pptx_bytes(messages, session_id, agent_name=agent_name)
+
+            filename = f"{safe_name}_对话记录.pptx"
+            encoded_filename = quote(filename)
+
+            return Response(
+
+                content=pptx_bytes,
+
+                media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+
+                headers={
+
+                    "Content-Disposition": f"attachment; filename*=UTF-8''{encoded_filename}"
+
+                }
+
+            )
+
+        except Exception as e:
+
+            logger.error(f"[导出 PPT] 失败: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail=f"PPT 生成失败: {str(e)}")
 
 
 
     elif format == "pdf":
 
-        # PDF 导出
-
+        # PDF 导出 —— 同样解析 Markdown，表格用 reportlab Table 渲染
         try:
 
-            from app.utils.pdf_generator import generate_chat_pdf
+            from app.utils.chat_export import generate_chat_pdf_bytes
+            pdf_bytes = generate_chat_pdf_bytes(messages, session_id, agent_name=agent_name)
 
-            pdf_bytes = generate_chat_pdf(messages, session_id, agent_name=agent_name)
-
-            # 安全文件名
-            from urllib.parse import quote
-            safe_name = agent_name.replace('/', '_').replace('\\', '_').replace('..', '_') if agent_name else f'chat_{session_id[:12]}'
             filename = f"{safe_name}_对话记录.pdf"
             encoded_filename = quote(filename)
 
@@ -2635,6 +2584,7 @@ async def export_chat(session_id: str, format: str = "md", agent_name: str = "")
 
         except Exception as e:
 
+            logger.error(f"[导出 PDF] 失败: {e}", exc_info=True)
             raise HTTPException(status_code=500, detail=f"PDF 生成失败: {str(e)}")
 
     else:
@@ -2651,9 +2601,6 @@ async def export_chat(session_id: str, format: str = "md", agent_name: str = "")
 
 
 
-        # 安全文件名
-        from urllib.parse import quote
-        safe_name = agent_name.replace('/', '_').replace('\\', '_').replace('..', '_') if agent_name else f'chat_{session_id[:12]}'
         md_filename = f"{safe_name}_对话记录.md"
         encoded_md_filename = quote(md_filename)
 

@@ -2707,8 +2707,8 @@ async function exportChat(format) {
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        const extMap = { docx: 'docx', pdf: 'pdf', md: 'md' };
-        const nameMap = { docx: 'Word', pdf: 'PDF', md: 'Markdown' };
+        const extMap = { docx: 'docx', pptx: 'pptx', pdf: 'pdf', md: 'md' };
+        const nameMap = { docx: 'Word', pptx: 'PPT', pdf: 'PDF', md: 'Markdown' };
         const ext = extMap[format] || 'md';
         // 文件名包含智能体名称
         const safeName = agentName ? agentName.replace(/[\\/:*?"<>|]/g, '_') : 'chat';

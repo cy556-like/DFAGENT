@@ -147,9 +147,30 @@ def parse_markdown(text: str) -> List[Block]:
                 table_lines: List[str] = []
                 while i < n:
                     line = lines[i].strip()
+                    # 标准表格行：以 | 开头且中间还有 |
                     if line.startswith('|') and '|' in line[1:]:
                         table_lines.append(line)
                         i += 1
+                    # 容错1: 折行续行——不以 | 开头但以 | 结尾，且上一行是表格行
+                    elif table_lines and line.endswith('|') and '|' in line:
+                        # 把续行内容追加到上一行末尾（去掉首尾空格和尾部的|）
+                        cont = line.rstrip()
+                        if cont.endswith('|'):
+                            cont = cont[:-1].strip()
+                        if cont:
+                            table_lines[-1] = table_lines[-1].rstrip('|').rstrip() + ' ' + cont + ' |'
+                        i += 1
+                    # 容错2: 纯续行——不以 | 开头也不以 | 结尾，但上一行表格行的单元格数不够
+                    elif table_lines and not line.startswith(('#', '```', '>')) and not _HR_RE.match(line) and not _UL_RE.match(line) and not _OL_RE.match(line):
+                        # 检查上一行是否单元格数不足（可能是折行的内容）
+                        prev = table_lines[-1]
+                        prev_cells = [c for c in prev.strip('|').split('|')]
+                        # 如果上一行只有1个单元格（可能是 | xxx | 这种残缺行），把当前行作为第二个单元格
+                        if len(prev_cells) <= 2 and '|' in prev:
+                            table_lines[-1] = prev.rstrip('|').rstrip() + ' ' + line + ' |'
+                            i += 1
+                        else:
+                            break
                     else:
                         break
                 header, rows = _parse_table(table_lines)
@@ -271,7 +292,12 @@ def parse_markdown(text: str) -> List[Block]:
 
 
 def _parse_table(table_lines: List[str]) -> Tuple[List[str], List[List[str]]]:
-    """解析 Markdown 表格行 → (header, rows)"""
+    """解析 Markdown 表格行 → (header, rows)
+
+    容错处理：
+    - 跳过分隔行 |---|---|
+    - 单元格数不齐时按表头列数补空字符串
+    """
     def split_row(line: str) -> List[str]:
         s = line.strip()
         if s.startswith('|'):
@@ -284,11 +310,19 @@ def _parse_table(table_lines: List[str]) -> Tuple[List[str], List[List[str]]]:
         return [], []
 
     header = split_row(table_lines[0])
+    num_cols = len(header)
     rows: List[List[str]] = []
     for line in table_lines[2:]:  # 跳过分隔行
         if _TABLE_SEP_RE.match(line.strip()):
             continue
-        rows.append(split_row(line))
+        row = split_row(line)
+        # 补齐或截断到表头列数
+        if len(row) < num_cols:
+            row = row + [''] * (num_cols - len(row))
+        elif len(row) > num_cols:
+            # 合并多余的单元格（可能是内容里含 | 导致误切）
+            row = row[:num_cols - 1] + [' | '.join(row[num_cols - 1:])]
+        rows.append(row)
     return header, rows
 
 
@@ -569,29 +603,42 @@ def generate_chat_docx_bytes(
 
     def _render_blocks(blocks: List[Block]):
         for blk in blocks:
-            if isinstance(blk, HeadingBlock):
-                level = min(blk.level, 4)
-                h = doc.add_heading(strip_markdown_inline(blk.text), level=level)
-            elif isinstance(blk, ParagraphBlock):
-                p = doc.add_paragraph()
-                _add_inline_runs(p, blk.text, size_pt=11)
-            elif isinstance(blk, ListItemBlock):
-                style_name = 'List Number' if blk.ordered else 'List Bullet'
-                try:
-                    p = doc.add_paragraph(style=style_name)
-                except KeyError:
+            try:
+                if isinstance(blk, HeadingBlock):
+                    level = min(blk.level, 4)
+                    h = doc.add_heading(strip_markdown_inline(blk.text), level=level)
+                elif isinstance(blk, ParagraphBlock):
                     p = doc.add_paragraph()
-                    p.add_run(('• ' if not blk.ordered else f'{blk.index}. '))
-                _add_inline_runs(p, strip_markdown_inline(blk.text), size_pt=11)
-            elif isinstance(blk, TableBlock):
-                _add_table(blk.header, blk.rows)
-            elif isinstance(blk, CodeBlock):
-                _add_code_block(blk.code)
-            elif isinstance(blk, QuoteBlock):
-                _add_quote_block(blk.text)
-            elif isinstance(blk, HrBlock):
-                p = doc.add_paragraph('─' * 40)
-                p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                    _add_inline_runs(p, blk.text, size_pt=11)
+                elif isinstance(blk, ListItemBlock):
+                    style_name = 'List Number' if blk.ordered else 'List Bullet'
+                    try:
+                        p = doc.add_paragraph(style=style_name)
+                    except KeyError:
+                        p = doc.add_paragraph()
+                        p.add_run(('• ' if not blk.ordered else f'{blk.index}. '))
+                    _add_inline_runs(p, strip_markdown_inline(blk.text), size_pt=11)
+                elif isinstance(blk, TableBlock):
+                    _add_table(blk.header, blk.rows)
+                elif isinstance(blk, CodeBlock):
+                    _add_code_block(blk.code)
+                elif isinstance(blk, QuoteBlock):
+                    _add_quote_block(blk.text)
+                elif isinstance(blk, HrBlock):
+                    p = doc.add_paragraph('─' * 40)
+                    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            except Exception as e:
+                logger.warning(f'[导出 Word] 渲染 block {blk.type} 失败，降级为纯文本: {e}')
+                try:
+                    fallback_text = getattr(blk, 'text', None) or getattr(blk, 'code', None) or ''
+                    if isinstance(blk, TableBlock):
+                        fallback_text = ' | '.join(blk.header) + '\n' + '\n'.join(' | '.join(r) for r in blk.rows)
+                    if fallback_text:
+                        p = doc.add_paragraph(str(fallback_text))
+                        for run in p.runs:
+                            _set_run_font(run, 10)
+                except Exception:
+                    pass
 
     # ===== 逐条消息渲染 =====
     for msg in messages:
@@ -643,18 +690,17 @@ def generate_chat_pdf_bytes(
     session_id: str,
     agent_name: str = '',
 ) -> bytes:
-    """生成对话导出 PDF（bytes）—— 同样解析 Markdown，避免输出 |---|---| 文本"""
-    try:
-        return _generate_pdf_reportlab(messages, session_id, agent_name)
-    except Exception as e:
-        logger.warning(f'[导出 PDF] reportlab 生成失败: {e}，回退到 pdf_generator.generate_chat_pdf')
-        from app.utils.pdf_generator import generate_chat_pdf
-        return generate_chat_pdf(messages, session_id, agent_name=agent_name)
+    """生成对话导出 PDF（bytes）—— 解析 Markdown 后渲染为原生 PDF 元素
+
+    重要：不再静默回退到旧版 generate_chat_pdf（旧版会把 Markdown 原文当纯文本输出）。
+    如果渲染失败，直接抛出异常，让上游返回 500 错误，便于定位问题。
+    """
+    return _generate_pdf_reportlab(messages, session_id, agent_name)
 
 
 def _generate_pdf_reportlab(messages, session_id, agent_name) -> bytes:
     from reportlab.platypus import (SimpleDocTemplate, Paragraph, Spacer, HRFlowable,
-                                     Table as RLTable, TableStyle, Preformatted, KeepTogether)
+                                     Table as RLTable, TableStyle)
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.styles import ParagraphStyle
     from reportlab.lib.units import mm
@@ -688,9 +734,6 @@ def _generate_pdf_reportlab(messages, session_id, agent_name) -> bytes:
                                       textColor=HexColor('#1976D2'), spaceBefore=4 * mm, spaceAfter=2 * mm)
     heading_style_3 = ParagraphStyle('H3', fontName=font_name, fontSize=12, leading=18,
                                       textColor=HexColor('#1976D2'), spaceBefore=3 * mm, spaceAfter=1.5 * mm)
-    code_style = ParagraphStyle('Code', fontName='Courier', fontSize=9, leading=12,
-                                 leftIndent=4 * mm, spaceAfter=2 * mm,
-                                 backColor=HexColor('#F2F2F2'))
     quote_style = ParagraphStyle('Quote', fontName=font_name, fontSize=10, leading=14,
                                   leftIndent=6 * mm, textColor=HexColor('#666666'),
                                   spaceAfter=2 * mm)
@@ -734,49 +777,68 @@ def _generate_pdf_reportlab(messages, session_id, agent_name) -> bytes:
 
         try:
             blocks = parse_markdown(content)
-        except Exception:
+        except Exception as e:
+            logger.warning(f'[导出 PDF] parse_markdown 失败，降级为纯文本: {e}')
             blocks = [ParagraphBlock(content)]
 
         for blk in blocks:
-            if isinstance(blk, HeadingBlock):
-                hs = heading_style_2 if blk.level <= 2 else heading_style_3
-                story.append(Paragraph(_inline_to_html(strip_markdown_inline(blk.text)), hs))
-            elif isinstance(blk, ParagraphBlock):
-                story.append(Paragraph(_inline_to_html(blk.text), body_style))
-            elif isinstance(blk, ListItemBlock):
-                prefix = f'{blk.index}. ' if blk.ordered else '• '
-                story.append(Paragraph(f'{prefix}{_inline_to_html(strip_markdown_inline(blk.text))}',
-                                        ParagraphStyle('Li', parent=body_style, leftIndent=6 * mm)))
-            elif isinstance(blk, TableBlock):
-                header = blk.header
-                rows = blk.rows
-                if not header:
-                    continue
-                num_cols = max(len(header), max((len(r) for r in rows), default=0))
-                header = header + [''] * (num_cols - len(header))
-                rows = [r + [''] * (num_cols - len(r)) for r in rows]
-                data = [[Paragraph(_inline_to_html(strip_markdown_inline(c)), body_style) for c in header]]
-                for r in rows:
-                    data.append([Paragraph(_inline_to_html(strip_markdown_inline(c)), body_style) for c in r])
-                tbl = RLTable(data, repeatRows=1)
-                tbl.setStyle(TableStyle([
-                    ('BACKGROUND', (0, 0), (-1, 0), HexColor('#D9E2F3')),
-                    ('GRID', (0, 0), (-1, -1), 0.5, HexColor('#999999')),
-                    ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-                    ('FONTSIZE', (0, 0), (-1, -1), 9),
-                    ('TOPPADDING', (0, 0), (-1, -1), 3),
-                    ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
-                ]))
-                story.append(KeepTogether(tbl))
-                story.append(Spacer(1, 2 * mm))
-            elif isinstance(blk, CodeBlock):
-                safe = _esc(blk.code)
-                story.append(Preformatted(safe, code_style))
-                story.append(Spacer(1, 2 * mm))
-            elif isinstance(blk, QuoteBlock):
-                story.append(Paragraph(f'<i>{_inline_to_html(strip_markdown_inline(blk.text))}</i>', quote_style))
-            elif isinstance(blk, HrBlock):
-                story.append(HRFlowable(width='100%', thickness=0.5, color=HexColor('#cccccc')))
+            try:
+                if isinstance(blk, HeadingBlock):
+                    hs = heading_style_2 if blk.level <= 2 else heading_style_3
+                    story.append(Paragraph(_inline_to_html(strip_markdown_inline(blk.text)), hs))
+                elif isinstance(blk, ParagraphBlock):
+                    story.append(Paragraph(_inline_to_html(blk.text), body_style))
+                elif isinstance(blk, ListItemBlock):
+                    prefix = f'{blk.index}. ' if blk.ordered else '• '
+                    story.append(Paragraph(f'{prefix}{_inline_to_html(strip_markdown_inline(blk.text))}',
+                                            ParagraphStyle('Li', parent=body_style, leftIndent=6 * mm)))
+                elif isinstance(blk, TableBlock):
+                    header = blk.header
+                    rows = blk.rows
+                    if not header:
+                        continue
+                    num_cols = max(len(header), max((len(r) for r in rows), default=0))
+                    header = header + [''] * (num_cols - len(header))
+                    rows = [r + [''] * (num_cols - len(r)) for r in rows]
+                    data = [[Paragraph(_inline_to_html(strip_markdown_inline(c)) or '&nbsp;', body_style) for c in header]]
+                    for r in rows:
+                        data.append([Paragraph(_inline_to_html(strip_markdown_inline(c)) or '&nbsp;', body_style) for c in r])
+                    tbl = RLTable(data, repeatRows=1)
+                    tbl.setStyle(TableStyle([
+                        ('BACKGROUND', (0, 0), (-1, 0), HexColor('#D9E2F3')),
+                        ('GRID', (0, 0), (-1, -1), 0.5, HexColor('#999999')),
+                        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                        ('FONTSIZE', (0, 0), (-1, -1), 9),
+                        ('TOPPADDING', (0, 0), (-1, -1), 3),
+                        ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
+                    ]))
+                    story.append(tbl)
+                    story.append(Spacer(1, 2 * mm))
+                elif isinstance(blk, CodeBlock):
+                    # 用 Paragraph + <br/> 代替 Preformatted，避免 XML 解析问题
+                    code_html = _esc(blk.code).replace('\n', '<br/>')
+                    code_para_style = ParagraphStyle('CodeP', fontName='Courier', fontSize=9, leading=12,
+                                                      leftIndent=4 * mm, spaceAfter=2 * mm,
+                                                      backColor=HexColor('#F2F2F2'),
+                                                      borderColor=HexColor('#CCCCCC'), borderWidth=0.5,
+                                                      borderPadding=4)
+                    story.append(Paragraph(code_html, code_para_style))
+                    story.append(Spacer(1, 2 * mm))
+                elif isinstance(blk, QuoteBlock):
+                    story.append(Paragraph(f'<i>{_inline_to_html(strip_markdown_inline(blk.text))}</i>', quote_style))
+                elif isinstance(blk, HrBlock):
+                    story.append(HRFlowable(width='100%', thickness=0.5, color=HexColor('#cccccc')))
+            except Exception as e:
+                logger.warning(f'[导出 PDF] 渲染 block {blk.type} 失败，降级为纯文本: {e}')
+                # 降级：把 block 的文本内容当普通段落渲染
+                try:
+                    fallback_text = getattr(blk, 'text', None) or getattr(blk, 'code', None) or ''
+                    if isinstance(blk, TableBlock):
+                        fallback_text = ' | '.join(blk.header) + ' | ' + ' | '.join(' | '.join(r) for r in blk.rows)
+                    if fallback_text:
+                        story.append(Paragraph(_esc(str(fallback_text)), body_style))
+                except Exception:
+                    pass
 
         story.append(Spacer(1, 2 * mm))
         story.append(HRFlowable(width='100%', thickness=0.5, color=HexColor('#cccccc')))

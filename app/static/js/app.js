@@ -2055,8 +2055,53 @@ async function streamChat(url, options, bubble) {
     }
 
     function addCursor() {
-        if (cursorEl) return;
+        // cursor 现在由 renderStreamMarkdown 负责追加，这里只触发首次渲染
         removeThinking();
+        if (!streamRenderTimer) {
+            renderStreamMarkdown();
+        }
+    }
+
+    // [流式 Markdown 渲染] 节流：80ms 内最多渲染一次，避免高频 re-parse 卡顿
+    // 长回复（几百字以上）时纯文本追加是 O(1)，marked.parse 是 O(n)，
+    // 每个 token 都 re-parse 会掉帧；节流到 ~12fps 人眼无感但流畅
+    let streamRenderTimer = null;
+    const STREAM_RENDER_INTERVAL = 80;  // ms
+
+    function renderStreamMarkdown() {
+        if (streamRenderTimer) return;
+        streamRenderTimer = setTimeout(() => {
+            streamRenderTimer = null;
+            doStreamRender();
+        }, STREAM_RENDER_INTERVAL);
+    }
+
+    function doStreamRender() {
+        // 保存 tool-tag（renderBubbleMarkdown 会覆盖 innerHTML）
+        const toolTags = Array.from(bubble.querySelectorAll('.tool-tag'));
+        if (fullText) {
+            try {
+                if (typeof marked !== 'undefined') {
+                    bubble.innerHTML = marked.parse(fullText);
+                    injectDownloadButtons(bubble);
+                } else {
+                    bubble.innerHTML = escapeHtml(fullText).replace(/\n/g, '<br>');
+                }
+            } catch (e) {
+                bubble.innerHTML = escapeHtml(fullText).replace(/\n/g, '<br>');
+            }
+        }
+        // 重新插入 tool-tag 到开头
+        if (toolTags.length > 0) {
+            const fragment = document.createDocumentFragment();
+            toolTags.forEach(tag => fragment.appendChild(tag));
+            fragment.appendChild(document.createTextNode(' '));
+            bubble.insertBefore(fragment, bubble.firstChild);
+        }
+        // 追加流式光标
+        if (cursorEl) {
+            cursorEl.remove();
+        }
         cursorEl = document.createElement('span');
         cursorEl.className = 'stream-cursor';
         cursorEl.textContent = '▊';
@@ -2066,17 +2111,18 @@ async function streamChat(url, options, bubble) {
 
     function appendToken(text) {
         removeThinking();
-        if (cursorEl) {
-            cursorEl.before(document.createTextNode(text));
-        } else {
-            bubble.appendChild(document.createTextNode(text));
-        }
-        smartScrollToBottom();
+        fullText += text;
+        // 触发节流渲染（首次也会通过 addCursor 触发，这里做兜底）
+        renderStreamMarkdown();
     }
 
     function finalize() {
-        if (cursorEl) cursorEl.remove();
-        cursorEl = null;
+        // 清除节流定时器，立即做最终渲染（不带 cursor）
+        if (streamRenderTimer) {
+            clearTimeout(streamRenderTimer);
+            streamRenderTimer = null;
+        }
+        if (cursorEl) { cursorEl.remove(); cursorEl = null; }
     }
 
     try {
@@ -2117,7 +2163,7 @@ async function streamChat(url, options, bubble) {
                         case 'thinking': addThinking(); break;
                         case 'tool': addToolTag(data.display || data.name, false); break;
                         case 'tool_done': addToolTag(data.display || data.name, true); break;
-                        case 'token': addCursor(); appendToken(data.content); fullText += data.content; break;
+                        case 'token': addCursor(); appendToken(data.content); break;
                         case 'done': finalize(); break;
                         case 'error': removeThinking(); finalize(); { const errSpan = document.createElement('span'); errSpan.style.color = 'var(--error)'; errSpan.textContent = data.content; bubble.appendChild(document.createElement('br')); bubble.appendChild(errSpan); } break;
                     }

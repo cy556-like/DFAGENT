@@ -729,14 +729,17 @@ def _generate_pdf_reportlab(messages, session_id, agent_name) -> bytes:
                                       textColor=HexColor('#1a1a1a'), spaceAfter=2 * mm)
     role_asst_style = ParagraphStyle('RoleAsst', fontName=font_name, fontSize=11, leading=16,
                                       textColor=HexColor('#1976D2'), spaceAfter=2 * mm)
-    body_style = ParagraphStyle('Body', fontName=font_name, fontSize=10, leading=14, spaceAfter=2 * mm)
+    body_style = ParagraphStyle('Body', fontName=font_name, fontSize=10, leading=14,
+                                 spaceAfter=2 * mm, wordWrap='CJK')
     heading_style_2 = ParagraphStyle('H2', fontName=font_name, fontSize=14, leading=20,
-                                      textColor=HexColor('#1976D2'), spaceBefore=4 * mm, spaceAfter=2 * mm)
+                                      textColor=HexColor('#1976D2'), spaceBefore=4 * mm, spaceAfter=2 * mm,
+                                      wordWrap='CJK')
     heading_style_3 = ParagraphStyle('H3', fontName=font_name, fontSize=12, leading=18,
-                                      textColor=HexColor('#1976D2'), spaceBefore=3 * mm, spaceAfter=1.5 * mm)
+                                      textColor=HexColor('#1976D2'), spaceBefore=3 * mm, spaceAfter=1.5 * mm,
+                                      wordWrap='CJK')
     quote_style = ParagraphStyle('Quote', fontName=font_name, fontSize=10, leading=14,
                                   leftIndent=6 * mm, textColor=HexColor('#666666'),
-                                  spaceAfter=2 * mm)
+                                  spaceAfter=2 * mm, wordWrap='CJK')
 
     def _esc(s: str) -> str:
         return (s.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;'))
@@ -798,19 +801,63 @@ def _generate_pdf_reportlab(messages, session_id, agent_name) -> bytes:
                     if not header:
                         continue
                     num_cols = max(len(header), max((len(r) for r in rows), default=0))
+                    if num_cols == 0:
+                        continue
                     header = header + [''] * (num_cols - len(header))
                     rows = [r + [''] * (num_cols - len(r)) for r in rows]
-                    data = [[Paragraph(_inline_to_html(strip_markdown_inline(c)) or '&nbsp;', body_style) for c in header]]
+
+                    # 列数多时缩小字号，保证列宽够用
+                    if num_cols <= 4:
+                        cell_font_size = 9
+                    elif num_cols <= 6:
+                        cell_font_size = 8
+                    elif num_cols <= 8:
+                        cell_font_size = 7
+                    else:
+                        cell_font_size = 6
+                    cell_style = ParagraphStyle('Cell', fontName=font_name,
+                                                 fontSize=cell_font_size,
+                                                 leading=cell_font_size + 2,
+                                                 wordWrap='CJK')
+                    header_cell_style = ParagraphStyle('HCell', fontName=font_name,
+                                                        fontSize=cell_font_size,
+                                                        leading=cell_font_size + 2,
+                                                        wordWrap='CJK')
+
+                    # 显式计算列宽：A4 纵向可用宽度 = 210 - 15*2 = 180mm
+                    # 减去左右 padding（各 3pt = ~1mm），按内容长度加权分配
+                    avail_width_pt = A4[0] - 30 * mm  # ~510pt
+                    # 按各列内容最大字符数加权
+                    col_max_lens = [0] * num_cols
+                    for c_idx, c in enumerate(header):
+                        col_max_lens[c_idx] = max(col_max_lens[c_idx], len(c))
                     for r in rows:
-                        data.append([Paragraph(_inline_to_html(strip_markdown_inline(c)) or '&nbsp;', body_style) for c in r])
-                    tbl = RLTable(data, repeatRows=1)
+                        for c_idx, c in enumerate(r):
+                            col_max_lens[c_idx] = max(col_max_lens[c_idx], len(c))
+                    total_chars = max(sum(col_max_lens), 1)
+                    # 每列最小宽度 = 2 个汉字 = ~24pt；最大不超过 1/3 总宽
+                    min_col_pt = 24
+                    max_col_pt = avail_width_pt / 3
+                    raw_widths = [max(min_col_pt, min(max_col_pt,
+                                                       avail_width_pt * (l / total_chars)))
+                                  for l in col_max_lens]
+                    # 归一化到总可用宽度
+                    raw_sum = sum(raw_widths)
+                    col_widths = [w * avail_width_pt / raw_sum for w in raw_widths]
+
+                    data = [[Paragraph(_inline_to_html(strip_markdown_inline(c)) or '&nbsp;', header_cell_style) for c in header]]
+                    for r in rows:
+                        data.append([Paragraph(_inline_to_html(strip_markdown_inline(c)) or '&nbsp;', cell_style) for c in r])
+                    tbl = RLTable(data, repeatRows=1, colWidths=col_widths)
                     tbl.setStyle(TableStyle([
                         ('BACKGROUND', (0, 0), (-1, 0), HexColor('#D9E2F3')),
                         ('GRID', (0, 0), (-1, -1), 0.5, HexColor('#999999')),
                         ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-                        ('FONTSIZE', (0, 0), (-1, -1), 9),
-                        ('TOPPADDING', (0, 0), (-1, -1), 3),
-                        ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
+                        ('FONTSIZE', (0, 0), (-1, -1), cell_font_size),
+                        ('TOPPADDING', (0, 0), (-1, -1), 2),
+                        ('BOTTOMPADDING', (0, 0), (-1, -1), 2),
+                        ('LEFTPADDING', (0, 0), (-1, -1), 3),
+                        ('RIGHTPADDING', (0, 0), (-1, -1), 3),
                     ]))
                     story.append(tbl)
                     story.append(Spacer(1, 2 * mm))

@@ -2470,14 +2470,14 @@ async def export_chat(session_id: str, format: str = "md", agent_name: str = "")
 
     """
 
-    导出对话为 Word(docx)、PPT(pptx)、PDF 或 Markdown 格式
+    导出对话为 Word(docx)、PDF 或 Markdown 格式
 
-    format: docx | pptx | pdf | md
+    format: docx | pdf | md
     agent_name: 当前智能体名称（用于文件名和标题）
 
     说明：
-    - docx / pptx / pdf 都会先解析消息内容中的 Markdown，再渲染为对应格式的
-      原生元素（Word/PPT 表格、标题、列表、代码块等），避免出现 |---|---|
+    - docx / pdf 都会先解析消息内容中的 Markdown，再渲染为对应格式的
+      原生元素（Word/PDF 表格、标题、列表、代码块等），避免出现 |---|---|
       这样的纯文本残留。
     """
 
@@ -2523,37 +2523,6 @@ async def export_chat(session_id: str, format: str = "md", agent_name: str = "")
 
             logger.error(f"[导出 Word] 失败: {e}", exc_info=True)
             raise HTTPException(status_code=500, detail=f"Word 生成失败: {str(e)}")
-
-
-
-    elif format == "pptx":
-
-        # PowerPoint (pptx) 导出 —— 新增：解析 Markdown 后按章节切分多张幻灯片
-        try:
-            from app.utils.chat_export import generate_chat_pptx_bytes
-            pptx_bytes = generate_chat_pptx_bytes(messages, session_id, agent_name=agent_name)
-
-            filename = f"{safe_name}_对话记录.pptx"
-            encoded_filename = quote(filename)
-
-            return Response(
-
-                content=pptx_bytes,
-
-                media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
-
-                headers={
-
-                    "Content-Disposition": f"attachment; filename*=UTF-8''{encoded_filename}"
-
-                }
-
-            )
-
-        except Exception as e:
-
-            logger.error(f"[导出 PPT] 失败: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail=f"PPT 生成失败: {str(e)}")
 
 
 

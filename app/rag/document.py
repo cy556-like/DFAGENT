@@ -3255,7 +3255,8 @@ def export_document_as_xlsx(content: str, filename: str, title: str = "", sessio
         # If there's non-table content but no tables, write text to first sheet
         if pending_info_lines and not has_table:
             ws = wb.active
-            ws.title = current_sheet_name[:31] if current_sheet_name else 'Sheet1'
+            _safe_name = _re.sub(_illegal_chars, '_', (current_sheet_name or 'Sheet1'))[:31]
+            ws.title = _safe_name
             for row_idx, text in enumerate(pending_info_lines, 1):
                 ws.cell(row=row_idx, column=1, value=text)
         
@@ -3291,11 +3292,16 @@ def _write_rows_to_xlsx_sheet(wb, rows_data, sheet_index, sheet_name,
     Returns:
         int: next sheet index
     """
+    # [BUG FIX] 过滤 sheet title 中的非法字符（Excel 不允许: [ ] : * ? / \）
+    import re as _re
+    _illegal_chars = r'[\[\]:\*\?/\\]'
+    _safe_sheet_name = _re.sub(_illegal_chars, '_', (sheet_name or '表格1'))[:31]
+
     if sheet_index == 0:
         ws = wb.active
-        ws.title = (sheet_name or '表格1')[:31]
+        ws.title = _safe_sheet_name
     else:
-        ws = wb.create_sheet(title=(sheet_name or f'表格{sheet_index+1}')[:31])
+        ws = wb.create_sheet(title=_safe_sheet_name)
     
     # Write info lines above the table (e.g., project metadata)
     info_row_count = 0

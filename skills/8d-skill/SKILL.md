@@ -95,14 +95,14 @@ description: "汽车行业IATF 16949 8D问题解决报告生成器。根据产�
 ### Step 4：调用生成脚本
 
 ```bash
-python3 /home/z/my-project/skills/8d-report/scripts/generate_8d.py \
+python skills/8d-skill/scripts/generate_8d.py \
   --product "前保险杠总成（涂装件）" \
   --defect "漆面颗粒/杂质" \
   --customer "XX 汽车有限公司" \
   --defect-rate "11.5%" \
   --batch-size "500" \
   --template paint-defect \
-  --output-dir /home/z/my-project/download
+  --output-dir data/export
 ```
 
 脚本自动：

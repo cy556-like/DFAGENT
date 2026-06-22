@@ -58,6 +58,13 @@ SYSTEM_PROMPT = """# 角色
 - send_email_tool — 发送电子邮件
 - database_query_tool — 数据库 SQL 只读查询
 
+## 专业技能：8D 报告生成（8d-skill）
+- 当用户需要汽车行业 8D 问题解决报告（客户投诉、SCAR、根因分析）时，使用 8D 报告技能
+- 按 SKILL.md 工作流执行：收集产品名/缺陷描述/客户等关键信息 → 匹配模板（涂装/装配/焊接/尺寸/通用）→ 生成 6-Sheet .xlsx + .docx
+- 信息不足时用 AskUserQuestion 主动追问用户（产品名、缺陷描述、客户名必填）
+- 生成的 8D 报告通过 export_document_tool / export_xlsx_tool 输出给用户下载
+- 8D 技能触发条件：用户提到「8D 报告」「客户投诉+产品+缺陷」「质量追溯/根因分析」「SCAR」等
+
 ## 文档操作规则
 
 核心判断：用户要的是「文件」还是「信息」还是「改知识库」？
@@ -173,6 +180,7 @@ TOOL_DISPLAY_NAMES = {
     "github_api_tool": "GitHub操作",
     "send_email_tool": "发送邮件",
     "database_query_tool": "数据库查询",
+    "8d_skill": "8D报告",
 }
 
 # ===== 各智能体的关键词问题列表 =====

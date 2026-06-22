@@ -3198,12 +3198,15 @@ def export_document_as_xlsx(content: str, filename: str, title: str = "", sessio
         )
         
         # Parse content and extract tables
+        # 【单 Sheet 设计】所有表格和文本都写在唯一一个工作表里，按行顺序往下追加，绝不创建多个 Sheet。
         lines = content.split('\n')
-        current_row = 1
-        current_sheet_name = title or filename.rsplit('.', 1)[0]
+        sheet_name = title or filename.rsplit('.', 1)[0] or 'Sheet1'
+        ws = wb.active
+        ws.title = _sanitize_sheet_name(sheet_name)
         current_rows = []  # list of list of strings
         pending_info_lines = []  # non-table content to be written above the next table
         has_table = False
+        cursor_row = 1  # 下一段内容写入的起始行号
         
         for line in lines:
             stripped = line.strip()
@@ -3218,24 +3221,19 @@ def export_document_as_xlsx(content: str, filename: str, title: str = "", sessio
                 has_table = True
             else:
                 # If we were collecting table rows and now hit non-table line,
-                # flush the current table to a sheet
+                # flush the current table to the worksheet at cursor_row
                 if current_rows:
-                    current_row = _write_rows_to_xlsx_sheet(
-                        wb, current_rows, 0, current_sheet_name,
+                    cursor_row = _write_rows_to_xlsx_sheet(
+                        wb, ws, current_rows, cursor_row,
                         header_font, header_fill, header_alignment, 
                         cell_font, cell_alignment, thin_border,
                         info_lines=pending_info_lines, info_font=info_font, info_alignment=info_alignment
                     )
                     current_rows = []
                     pending_info_lines = []
-                    # single-sheet: keep first sheet name
                 
                 # Collect non-table content
                 if stripped:
-                    # Check for heading patterns that could be sheet names
-                    heading_match = re.match(r'^#{1,3}\s+(.+)', stripped)
-                    if heading_match and not has_table:
-                        current_sheet_name = heading_match.group(1).strip()[:31]  # Excel sheet name max 31 chars
                     # Clean markdown formatting and add as pending info
                     clean_text = re.sub(r'\*+', '', stripped)  # Remove markdown bold markers
                     clean_text = re.sub(r'^#{1,6}\s+', '', clean_text)  # Remove heading markers
@@ -3244,25 +3242,19 @@ def export_document_as_xlsx(content: str, filename: str, title: str = "", sessio
         
         # Flush remaining table rows
         if current_rows:
-            current_row = _write_rows_to_xlsx_sheet(
-                wb, current_rows, 0, current_sheet_name,
+            cursor_row = _write_rows_to_xlsx_sheet(
+                wb, ws, current_rows, cursor_row,
                 header_font, header_fill, header_alignment,
                 cell_font, cell_alignment, thin_border,
                 info_lines=pending_info_lines, info_font=info_font, info_alignment=info_alignment
             )
             pending_info_lines = []
         
-        # If there's non-table content but no tables, write text to first sheet
+        # If there's non-table content but no tables, write text to the single sheet
         if pending_info_lines and not has_table:
-            ws = wb.active
-            _safe_name = _re.sub(_illegal_chars, '_', (current_sheet_name or 'Sheet1'))[:31]
-            ws.title = _safe_name
-            for row_idx, text in enumerate(pending_info_lines, 1):
-                ws.cell(row=row_idx, column=1, value=text)
-        
-        # Remove default empty sheet if we created others
-        if False and 'Sheet' in wb.sheetnames:  # single-sheet: keep default
-            del wb['Sheet']
+            for text in pending_info_lines:
+                ws.cell(row=cursor_row, column=1, value=text)
+                cursor_row += 1
         
         wb.save(file_path)
         
@@ -3277,32 +3269,35 @@ def export_document_as_xlsx(content: str, filename: str, title: str = "", sessio
         return {"status": "error", "message": f"导出 XLSX 失败: {str(e)}"}
 
 
-def _write_rows_to_xlsx_sheet(wb, rows_data, sheet_index, sheet_name, 
-                                header_font, header_fill, header_alignment,
-                                cell_font, cell_alignment, thin_border,
-                                info_lines=None, info_font=None, info_alignment=None, start_row=1):
-    """Write parsed table rows to an XLSX worksheet
-    
-    Args:
-        info_lines: Optional list of non-table text lines to write above the table
-                    (e.g., project info like "项目名称: XXX")
-        info_font: Font for info lines
-        info_alignment: Alignment for info lines
-    
-    Returns:
-        int: next sheet index
-    """
-    # [BUG FIX] 过滤 sheet title 中的非法字符（Excel 不允许: [ ] : * ? / \）
+def _sanitize_sheet_name(name: str) -> str:
+    """清洗 sheet 名称：过滤 Excel 非法字符（[ ] : * ? / \\），最长 31 字符。"""
+    if not name:
+        return 'Sheet1'
     import re as _re
     _illegal_chars = r'[\[\]:\*\?/\\]'
-    _safe_sheet_name = _re.sub(_illegal_chars, '_', (sheet_name or '表格1'))[:31]
+    return _re.sub(_illegal_chars, '_', name)[:31] or 'Sheet1'
 
-    if sheet_index == 0:
-        ws = wb.active
-        ws.title = _safe_sheet_name
-    else:
-        ws = wb.create_sheet(title=_safe_sheet_name)
+
+def _write_rows_to_xlsx_sheet(wb, ws, rows_data, start_row,
+                                header_font, header_fill, header_alignment,
+                                cell_font, cell_alignment, thin_border,
+                                info_lines=None, info_font=None, info_alignment=None):
+    """将解析出的表格行写入指定 worksheet，从 start_row 开始向下追加。
     
+    【单 Sheet 设计】不再创建新 Sheet，所有内容追加到传入的 ws 上。
+    
+    Args:
+        wb: Workbook 对象（保留参数以兼容旧调用，但不再用于创建新 Sheet）
+        ws: 要写入的 Worksheet 对象
+        rows_data: 表格行数据（二维列表，第一行为表头）
+        start_row: 本次写入的起始行号
+        info_lines: 表格上方要写入的说明文本（如项目信息）
+        info_font: 说明文本字体
+        info_alignment: 说明文本对齐方式
+    
+    Returns:
+        int: 下一段内容应该写入的起始行号（cursor_row）
+    """
     # Write info lines above the table (e.g., project metadata)
     info_row_count = 0
     if info_lines:
@@ -3323,19 +3318,22 @@ def _write_rows_to_xlsx_sheet(wb, rows_data, sheet_index, sheet_name,
                 cell.alignment = info_alignment or cell_alignment
             info_row_count = i + 1
     
-    # Add a blank row between info and table if info exists
-    table_start_row = info_row_count + 1 if info_row_count > 0 else 1
+    # 表格前留一空行（仅当上方有 info_lines 时）
+    table_start_row = start_row + info_row_count + (1 if info_row_count > 0 else 0)
     
-    num_cols = max(len(row) for row in rows_data)
+    num_cols = max(len(row) for row in rows_data) if rows_data else 0
+    if num_cols == 0:
+        return table_start_row
     
-    for row_idx, row in enumerate(rows_data, table_start_row):
+    for row_idx_offset, row in enumerate(rows_data):
+        row_idx = table_start_row + row_idx_offset
         for col_idx, cell_text in enumerate(row[:num_cols], 1):
             # Clean markdown formatting
             clean_text = re.sub(r'\*+', '', cell_text)
             cell = ws.cell(row=row_idx, column=col_idx, value=clean_text)
             cell.border = thin_border
             
-            if row_idx == table_start_row:
+            if row_idx_offset == 0:
                 # Header row
                 cell.font = header_font
                 cell.fill = header_fill
@@ -3345,7 +3343,6 @@ def _write_rows_to_xlsx_sheet(wb, rows_data, sheet_index, sheet_name,
                 cell.alignment = cell_alignment
     
     # Auto-adjust column widths (CJK-aware: 中文算2单位，英文算1单位)
-    # [BUG FIX] 原代码用 len() 一个中文和一个英文都算1，导致列宽严重不足
     def _display_width(s: str) -> int:
         """计算字符串在 Excel 中的显示宽度（中文≈2，英文≈1）"""
         w = 0
@@ -3356,7 +3353,7 @@ def _write_rows_to_xlsx_sheet(wb, rows_data, sheet_index, sheet_name,
                 w += 1
         return w
     
-    # [BUG FIX] 自动合并多行表头：第一行宽分类列数 < 第二行子列数时，合并对应单元格
+    # 自动合并多行表头：第一行宽分类列数 < 第二行子列数时，合并对应单元格
     if len(rows_data) >= 2 and num_cols > 1:
         row1_content_cols = sum(1 for c in rows_data[0] if str(c).strip())
         if row1_content_cols > 0 and row1_content_cols < num_cols:
@@ -3377,6 +3374,7 @@ def _write_rows_to_xlsx_sheet(wb, rows_data, sheet_index, sheet_name,
                     start = col
                 col += 1
     
+    # 列宽只取所有表格中最宽的需要，避免后面表格被前面表格的窄列卡死
     for col_idx in range(1, num_cols + 1):
         max_length = 0
         for row in rows_data:
@@ -3394,12 +3392,17 @@ def _write_rows_to_xlsx_sheet(wb, rows_data, sheet_index, sheet_name,
                     max_length = max(max_length, _display_width(kv_match.group(2).strip()))
                 elif col_idx == 1:
                     max_length = max(max_length, _display_width(text))
-        # [BUG FIX] 宽表场景（>15列）放宽上限到80，避免中文内容挤成一团
         cap = 80 if num_cols > 15 else 50
         adjusted_width = min(max(max_length + 3, 8), cap)
-        ws.column_dimensions[ws.cell(row=1, column=col_idx).column_letter].width = adjusted_width
+        col_letter = ws.cell(row=1, column=col_idx).column_letter
+        existing = ws.column_dimensions[col_letter].width or 0
+        # 取较宽值，避免被先写的窄表格卡住
+        if adjusted_width > existing:
+            ws.column_dimensions[col_letter].width = adjusted_width
     
-    return table_start_row + len(rows_data) + 1  # next row
+    # 返回下一段内容应写入的起始行（表格末尾 + 2 行空行作为视觉间隔）
+    next_row = table_start_row + len(rows_data) + 2
+    return next_row
 
 
 def _add_landscape_section(doc, title_text: str = ""):

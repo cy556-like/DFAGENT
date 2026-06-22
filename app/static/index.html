@@ -86,6 +86,7 @@
             <div class="header-title-group">
                 <h1 id="chatTitle">东风科技研发智能体平台</h1>
                 <button class="header-kb-btn" id="headerKbBtn" onclick="showKbPage()" title="知识库" aria-label="知识库" style="display:none;"><span class="kb-btn-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg></span><span class="kb-btn-text">知识库</span></button>
+                <div class="skills-wrapper" id="skillsWrapper" style="display:none;"><button class="header-kb-btn" id="headerSkillsBtn" onclick="toggleSkillsDropdown(event)" title="技能" aria-label="技能" aria-haspopup="true"><span class="kb-btn-icon">🛠️</span><span class="kb-btn-text">Skills</span></button><div class="skills-dropdown" id="skillsDropdown" role="menu"><button onclick="selectSkill('8d-skill')" role="menuitem">📋 8D SKILL — 8D问题解决报告</button></div></div>
             </div>
             <div class="header-actions">
                 <select class="model-select" id="modelSelect" onchange="switchModel()" title="切换模型" aria-label="选择模型"></select>
@@ -150,6 +151,12 @@
                     <span class="kb-bar-text">知识库上传模式</span>
                     <span class="kb-bar-hint">下一个文件将上传到当前智能体的专属知识库</span>
                     <span class="kb-bar-remove" onclick="toggleAgentKbUpload()" role="button" aria-label="关闭">✕</span>
+                </div>
+                <div class="agent-kb-bar" id="skillModeBar" style="display:none; background: rgba(59,130,246,0.15); border-color: rgba(59,130,246,0.3);">
+                    <span class="kb-bar-icon">📋</span>
+                    <span class="kb-bar-text" id="skillModeText">8D SKILL模式</span>
+                    <span class="kb-bar-hint">当前启用了8D技能，AI将按8D流程生成报告</span>
+                    <span class="kb-bar-remove" onclick="clearSkill()" role="button" aria-label="关闭">✕</span>
                 </div>
             <div class="input-top"><textarea id="msgInput" rows="1" placeholder="输入问题，或粘贴/拖拽文件..." onkeydown="handleKey(event)" oninput="autoResize(this)" aria-label="输入消息"></textarea><div class="send-btn-wrap"><button class="icon-btn send" id="sendBtn" onclick="sendMessage()" title="发送" aria-label="发送消息">➤</button><button class="icon-btn stop" id="stopBtn" onclick="stopGeneration()" title="停止生成" style="display:none;" aria-label="停止生成">■</button></div></div><div class="input-toolbar"><button class="toolbar-btn file-upload-btn" onclick="document.getElementById('fileInput').click()" title="上传文件或图片" aria-label="上传文件">+</button><button class="toolbar-btn kb-upload-btn" id="kbUploadToggle" onclick="toggleAgentKbUpload()" title="上传到智能体知识库" aria-label="上传到知识库">📚</button><button class="web-search-toggle" id="webSearchToggle" onclick="toggleWebSearch()" title="开启/关闭联网搜索" aria-label="联网搜索" aria-pressed="false"><span class="toggle-icon">🌐</span><span class="toggle-label">联网搜索</span></button><button class="deep-think-toggle" id="deepThinkToggle" onclick="toggleDeepThink()" title="开启/关闭深度思考" aria-label="深度思考" aria-pressed="false"><span class="toggle-icon">🧠</span><span class="toggle-label">深度思考</span></button></div></div></div>
         </div>

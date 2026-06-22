@@ -201,7 +201,7 @@ def _load_8d_skill_context(skill: str, user_input: str) -> str:
             logger_.warning(f"8D skill SKILL.md not found at {skill_md_path}")
             return ""
 
-        with io.open(skill_md_path, "r", encoding="utf-8") as f:
+        with open(skill_md_path, "r", encoding="utf-8") as f:
             skill_md_content = f.read()
 
         # ---------- 模板匹配 ----------
@@ -233,7 +233,7 @@ def _load_8d_skill_context(skill: str, user_input: str) -> str:
                 + f"未找到模板 {matched_slug} 的 template.json，请按 SKILL.md 通用流程执行 8D 报告。\n"
             )
 
-        with io.open(template_path, "r", encoding="utf-8") as f:
+        with open(template_path, "r", encoding="utf-8") as f:
             template_json = json.load(f)
 
         template_str = json.dumps(template_json, ensure_ascii=False, indent=2)
@@ -252,7 +252,7 @@ def _load_8d_skill_context(skill: str, user_input: str) -> str:
             ref_path = os.path.join(references_dir, ref_name)
             if os.path.isfile(ref_path):
                 try:
-                    with io.open(ref_path, "r", encoding="utf-8") as rf:
+                    with open(ref_path, "r", encoding="utf-8") as rf:
                         ref_content = rf.read()
                     references_section += f"\n#### {ref_name}\n> {ref_desc}\n\n{ref_content}\n"
                     logger_.info(f"8D skill loaded reference: {ref_name} ({len(ref_content)} chars)")

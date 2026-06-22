@@ -2296,6 +2296,72 @@ async def set_model(req: ModelSetRequest):
 
 
 
+# ===== 技能列表接口 =====
+
+
+
+@router.get("/skills", summary="获取可用技能列表")
+
+async def get_skills():
+
+    """返回所有可用技能的信息（供前端 Skills 下拉菜单使用）"""
+
+    import os
+
+    skills_list = []
+
+    skills_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "skills")
+
+    if os.path.isdir(skills_dir):
+
+        for name in sorted(os.listdir(skills_dir)):
+
+            skill_dir = os.path.join(skills_dir, name)
+
+            skill_md = os.path.join(skill_dir, "SKILL.md")
+
+            if os.path.isdir(skill_dir) and os.path.isfile(skill_md):
+
+                # 读取 SKILL.md 的前两行提取 name 和 description
+
+                try:
+
+                    with open(skill_md, "r", encoding="utf-8") as f:
+
+                        front = f.read(512)
+
+                    skill_name = name
+
+                    skill_desc = ""
+
+                    for line in front.split("\n"):
+
+                        if line.startswith("name:"):
+
+                            skill_name = line.split(":", 1)[1].strip()
+
+                        elif line.startswith("description:"):
+
+                            skill_desc = line.split(":", 1)[1].strip().strip("\"")
+
+                    skills_list.append({
+
+                        "id": name,
+
+                        "name": skill_name,
+
+                        "description": skill_desc,
+
+                    })
+
+                except Exception:
+
+                    skills_list.append({"id": name, "name": name, "description": ""})
+
+    return {"success": True, "skills": skills_list}
+
+
+
 # ===== 使用统计接口 =====
 
 

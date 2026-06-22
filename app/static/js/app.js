@@ -24,6 +24,7 @@ let lastMessageText = '';
 let webSearchEnabled = false;
 let deepThinkEnabled = false;
 let currentMode = 'agent';
+let selectedSkill = null;  // 当前选中的技能（如 '8d-skill'）
 const MAX_FILE_SIZE = 50 * 1024 * 1024;
 
 // [#12] 同步防抖锁：避免短时间内重复调用 syncAgentsFromServer
@@ -822,12 +823,15 @@ function toggleMyAgents() {
 // ===== Agent KB Upload Toggle & Header KB Button Visibility =====
 function updateHeaderKbVisibility() {
     const btn = document.getElementById('headerKbBtn');
+    const skillsWrapper = document.getElementById('skillsWrapper');
     if (!btn) return;
-    // 只在选中了某个智能体时才显示 header 知识库按钮
+    // 只在选中了某个智能体时才显示 header 知识库按钮和 Skills 按钮
     if (currentAgentId) {
         btn.style.display = 'inline-flex';
+        if (skillsWrapper) skillsWrapper.style.display = 'inline-block';
     } else {
         btn.style.display = 'none';
+        if (skillsWrapper) skillsWrapper.style.display = 'none';
         // 同时关闭知识库页面
         const kbPage = document.getElementById('kbPage');
         if (kbPage && kbPage.style.display !== 'none') {
@@ -2390,6 +2394,7 @@ async function sendMessage() {
         formData.append('web_search', webSearchEnabled);
         formData.append('mode', currentMode);
         formData.append('deep_think', deepThinkEnabled);
+        formData.append('skill', selectedSkill || '');
         // 智能体ID和任务描述
         if (currentAgentId) {
             formData.append('agent_id', currentAgentId);
@@ -2431,7 +2436,7 @@ async function sendMessage() {
         await streamChat('/api/v1/chat/stream', {
             method: 'POST',
             headers: apiHeaders(),
-            body: JSON.stringify({ message, session_id: currentChatId, web_search: webSearchEnabled, mode: currentMode, deep_think: deepThinkEnabled, agent_id: currentAgentId || '', agent_task: (currentAgentId && myAgents.find(a => a.id === currentAgentId)) ? myAgents.find(a => a.id === currentAgentId).task : '' })
+            body: JSON.stringify({ message, session_id: currentChatId, web_search: webSearchEnabled, mode: currentMode, deep_think: deepThinkEnabled, skill: selectedSkill || '', agent_id: currentAgentId || '', agent_task: (currentAgentId && myAgents.find(a => a.id === currentAgentId)) ? myAgents.find(a => a.id === currentAgentId).task : '' })
         }, bubble);
         await loadChatList();
     }
@@ -2729,6 +2734,51 @@ function closeExportDropdown(e) {
     if (dropdown && !dropdown.contains(e.target)) {
         dropdown.classList.remove('show');
     }
+}
+
+// ===== Skills Dropdown =====
+function toggleSkillsDropdown(event) {
+    event.stopPropagation();
+    const dropdown = document.getElementById('skillsDropdown');
+    dropdown.classList.toggle('show');
+    if (dropdown.classList.contains('show')) {
+        setTimeout(() => {
+            document.addEventListener('click', closeSkillsDropdown, { once: true });
+        }, 0);
+    }
+}
+
+function closeSkillsDropdown(e) {
+    const dropdown = document.getElementById('skillsDropdown');
+    const btn = document.getElementById('headerSkillsBtn');
+    if (dropdown && !dropdown.contains(e.target) && btn && !btn.contains(e.target)) {
+        dropdown.classList.remove('show');
+    }
+}
+
+function selectSkill(skillId) {
+    const dropdown = document.getElementById('skillsDropdown');
+    if (dropdown) dropdown.classList.remove('show');
+    selectedSkill = skillId;
+    // 显示技能模式提示栏
+    const bar = document.getElementById('skillModeBar');
+    const text = document.getElementById('skillModeText');
+    if (bar && text) {
+        if (skillId === '8d-skill') {
+            text.textContent = '8D SKILL模式';
+        }
+        bar.style.display = '';
+    }
+    // 同步隐藏知识库上传模式（互斥）
+    if (agentKbUploadMode) toggleAgentKbUpload();
+    showToast('已启用 8D SKILL 模式');
+}
+
+function clearSkill() {
+    selectedSkill = null;
+    const bar = document.getElementById('skillModeBar');
+    if (bar) bar.style.display = 'none';
+    showToast('已退出技能模式');
 }
 
 async function exportChat(format) {

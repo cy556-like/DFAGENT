@@ -3199,7 +3199,7 @@ def export_document_as_xlsx(content: str, filename: str, title: str = "", sessio
         
         # Parse content and extract tables
         lines = content.split('\n')
-        sheet_index = 0
+        current_row = 1
         current_sheet_name = title or filename.rsplit('.', 1)[0]
         current_rows = []  # list of list of strings
         pending_info_lines = []  # non-table content to be written above the next table
@@ -3220,7 +3220,7 @@ def export_document_as_xlsx(content: str, filename: str, title: str = "", sessio
                 # If we were collecting table rows and now hit non-table line,
                 # flush the current table to a sheet
                 if current_rows:
-                    sheet_index = _write_rows_to_xlsx_sheet(
+                    current_row = _write_rows_to_xlsx_sheet(
                         wb, current_rows, sheet_index, current_sheet_name,
                         header_font, header_fill, header_alignment, 
                         cell_font, cell_alignment, thin_border,
@@ -3228,7 +3228,7 @@ def export_document_as_xlsx(content: str, filename: str, title: str = "", sessio
                     )
                     current_rows = []
                     pending_info_lines = []
-                    current_sheet_name = f'表格{sheet_index + 1}'
+                    # single-sheet: keep first sheet name
                 
                 # Collect non-table content
                 if stripped:
@@ -3244,7 +3244,7 @@ def export_document_as_xlsx(content: str, filename: str, title: str = "", sessio
         
         # Flush remaining table rows
         if current_rows:
-            sheet_index = _write_rows_to_xlsx_sheet(
+            current_row = _write_rows_to_xlsx_sheet(
                 wb, current_rows, sheet_index, current_sheet_name,
                 header_font, header_fill, header_alignment,
                 cell_font, cell_alignment, thin_border,
@@ -3261,7 +3261,7 @@ def export_document_as_xlsx(content: str, filename: str, title: str = "", sessio
                 ws.cell(row=row_idx, column=1, value=text)
         
         # Remove default empty sheet if we created others
-        if sheet_index > 0 and 'Sheet' in wb.sheetnames:
+        if False and 'Sheet' in wb.sheetnames:  # single-sheet: keep default
             del wb['Sheet']
         
         wb.save(file_path)
@@ -3277,7 +3277,7 @@ def export_document_as_xlsx(content: str, filename: str, title: str = "", sessio
         return {"status": "error", "message": f"导出 XLSX 失败: {str(e)}"}
 
 
-def _write_rows_to_xlsx_sheet(wb, rows_data, sheet_index, sheet_name, 
+def _write_rows_to_xlsx_sheet(wb, rows_data, sheet_index, sheet_name, start_row=1, 
                                 header_font, header_fill, header_alignment,
                                 cell_font, cell_alignment, thin_border,
                                 info_lines=None, info_font=None, info_alignment=None):
@@ -3307,7 +3307,7 @@ def _write_rows_to_xlsx_sheet(wb, rows_data, sheet_index, sheet_name,
     info_row_count = 0
     if info_lines:
         for i, text in enumerate(info_lines):
-            row_num = i + 1
+            row_num = start_row + i
             # Try to parse "key: value" or "key：value" patterns into two columns
             kv_match = re.match(r'^(.+?)[：:]\s*(.+)$', text)
             if kv_match:
@@ -3399,7 +3399,7 @@ def _write_rows_to_xlsx_sheet(wb, rows_data, sheet_index, sheet_name,
         adjusted_width = min(max(max_length + 3, 8), cap)
         ws.column_dimensions[ws.cell(row=1, column=col_idx).column_letter].width = adjusted_width
     
-    return sheet_index + 1
+    return table_start_row + len(rows_data) + 1  # next row
 
 
 def _add_landscape_section(doc, title_text: str = ""):

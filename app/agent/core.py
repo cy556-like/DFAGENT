@@ -238,12 +238,36 @@ def _load_8d_skill_context(skill: str, user_input: str) -> str:
 
         template_str = json.dumps(template_json, ensure_ascii=False, indent=2)
 
+        # ---------- 加载 references/ 参考资料 ----------
+        # SKILL.md 第六节明确指出这 3 个文件是 LLM 撰写报告时的参考资料，
+        # 必须真正加载内容，否则 SKILL.md 中的引用就是死链。
+        references_dir = os.path.join(project_root, "skills", "8d-skill", "references")
+        reference_files = [
+            ("8d_guide.md", "8D 方法论详细指南（D0-D8 每步关键活动、输出物、常见错误）"),
+            ("5why_examples.md", "5Why 范例库（5 个行业/缺陷类型的完整 5Why 范例 + 常见断点）"),
+            ("fishbone_guide.md", "鱼骨图 6M 分析指南（每个 M 含 5+ 条排查项 + 汽车行业清单）"),
+        ]
+        references_section = "\n### references/ 参考资料\n"
+        for ref_name, ref_desc in reference_files:
+            ref_path = os.path.join(references_dir, ref_name)
+            if os.path.isfile(ref_path):
+                try:
+                    with io.open(ref_path, "r", encoding="utf-8") as rf:
+                        ref_content = rf.read()
+                    references_section += f"\n#### {ref_name}\n> {ref_desc}\n\n{ref_content}\n"
+                    logger_.info(f"8D skill loaded reference: {ref_name} ({len(ref_content)} chars)")
+                except Exception as ref_e:
+                    logger_.warning(f"Failed to read reference {ref_name}: {ref_e}")
+            else:
+                logger_.warning(f"Reference file not found: {ref_path}")
+
         # ---------- 拼上下文 ----------
         context = (
-            "\n\n## 🔧 8D Skill 完整工作流（已加载 SKILL.md + 匹配模板）\n\n"
+            "\n\n## 🔧 8D Skill 完整工作流（已加载 SKILL.md + 匹配模板 + references/）\n\n"
             f"### 已匹配模板：{matched_slug}\n"
             f"\n### SKILL.md 完整内容\n\n{skill_md_content}\n\n"
-            f"### 匹配模板 template.json（请直接使用预填的 5Why 路径、6M 排查项、CA 措施、Yokoten，不要凭经验编造）\n\n```json\n{template_str}\n```\n\n"
+            f"### 匹配模板 template.json（请直接使用预填的 5Why 路径、6M 排查项、CA 措施、Yokoten，不要凭经验编造）\n\n```json\n{template_str}\n```\n"
+            f"{references_section}\n"
             "### 执行要求\n"
             "1. 严格按 SKILL.md 中的「五、工作流」执行，禁止跳过任何一步\n"
             "2. 5Why 路径必须使用 template.json 中 d4_template.5why_path.steps 的预填答案（可基于用户实际信息微调，但不得凭空编造）\n"
@@ -252,7 +276,7 @@ def _load_8d_skill_context(skill: str, user_input: str) -> str:
             "5. Yokoten 必须使用 template.json 中 d7_template.yokoten 的预填项\n"
             "6. 输出 D0-D8 完整 8 步内容到对话，最后调用 export_xlsx_tool + export_document_tool 生成文件\n"
         )
-        logger_.info(f"8D skill context loaded: SKILL.md ({len(skill_md_content)} chars) + template {matched_slug} ({len(template_str)} chars)")
+        logger_.info(f"8D skill context loaded: SKILL.md ({len(skill_md_content)} chars) + template {matched_slug} ({len(template_str)} chars) + references (3 files)")
         return context
     except Exception as e:
         import logging

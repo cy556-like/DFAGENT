@@ -20,8 +20,8 @@ if not load_dotenv(_env_path):
 AVAILABLE_MODELS = [
     # DeepSeek 系列（火山引擎）
     {"id": "DeepSeek-V4-Flash", "name": "DeepSeek-V4-Flash", "desc": "DeepSeek快速版，性价比高"},
-    # GLM 系列（智谱AI）
-    {"id": "glm-5.1", "name": "GLM-5.1", "desc": "最新旗舰，Coding对齐Claude Opus 4.6"},
+    # GLM 系列（火山引擎Ark，与豆包/DeepSeek共用套餐）
+    {"id": "glm-5.2", "name": "GLM-5.2", "desc": "GLM旗舰，火山引擎Ark"},
     # 豆包系列（火山引擎）
     {"id": "Doubao-Seed-2.0-pro", "name": "Doubao-Seed-2.0-Pro", "desc": "豆包旗舰，火山引擎"},
     # 千问系列（阿里云）
@@ -42,8 +42,8 @@ VISION_BASE_URL: str = os.getenv("VISION_BASE_URL", "https://open.bigmodel.cn/ap
 # 快速模型列表（用于意图路由，加速简单问题的响应）
 FAST_MODELS = {"DeepSeek-V4-Flash"}
 
-# 火山引擎模型列表（走火山引擎Ark Coding API，包括豆包Auto/DeepSeek/豆包）
-VOLCENGINE_MODELS = {"DeepSeek-V4-Flash", "Doubao-Seed-2.0-pro"}
+# 火山引擎模型列表（走火山引擎Ark Coding API，包括豆包/DeepSeek/GLM）
+VOLCENGINE_MODELS = {"DeepSeek-V4-Flash", "Doubao-Seed-2.0-pro", "glm-5.2"}
 
 # DeepSeek 模型列表（兼容旧代码引用，走火山引擎Coding API）
 DEEPSEEK_MODELS = {"DeepSeek-V4-Flash"}
@@ -54,8 +54,8 @@ QWEN_MODELS = {"qwen3.7-plus"}
 # MiMo模型列表（走小米MiMo API）
 MIMO_MODELS = {"mimo-v2.5-pro"}
 
-# GLM模型列表（走阿里云百炼平台，兼容模式代理智谱模型）
-GLM_MODELS = {"glm-5.1"}
+# GLM模型列表（GLM-5.2 已加入 VOLCENGINE_MODELS，走火山引擎Ark；此处仅保留旧版兼容）
+GLM_MODELS = set()
 
 
 class Settings:
@@ -64,7 +64,7 @@ class Settings:
     # LLM 默认配置（阿里云百炼平台，兼容模式代理多家模型）
     LLM_API_KEY: str = os.getenv("LLM_API_KEY", "")
     LLM_BASE_URL: str = os.getenv("LLM_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
-    LLM_MODEL: str = os.getenv("LLM_MODEL", "glm-5.1")
+    LLM_MODEL: str = os.getenv("LLM_MODEL", "glm-5.2")
 
     # LLM 备用配置（主Key失效时自动切换）
     LLM_API_KEY_BACKUP: str = os.getenv("LLM_API_KEY_BACKUP", "")

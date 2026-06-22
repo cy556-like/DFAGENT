@@ -257,7 +257,7 @@ def create_llm(deep_think: bool = False, fast_mode: bool = False, model_override
     elif is_glm and settings.GLM_API_KEY:
         api_key = settings.GLM_API_KEY
         base_url = settings.GLM_BASE_URL
-        logger.info(f"GLM模型检测到（{model}），使用阿里云百炼平台: {base_url}")
+        logger.info(f"GLM模型检测到（{model}），使用火山引擎Ark: {base_url}")
     # [视觉模型] 无论当前选什么模型，视觉理解始终走智谱AI专用配置
     elif model in VISION_MODELS:
         api_key = VISION_API_KEY

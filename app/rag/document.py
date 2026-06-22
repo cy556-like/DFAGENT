@@ -3277,10 +3277,10 @@ def export_document_as_xlsx(content: str, filename: str, title: str = "", sessio
         return {"status": "error", "message": f"导出 XLSX 失败: {str(e)}"}
 
 
-def _write_rows_to_xlsx_sheet(wb, rows_data, sheet_index, sheet_name, start_row=1, 
+def _write_rows_to_xlsx_sheet(wb, rows_data, sheet_index, sheet_name, 
                                 header_font, header_fill, header_alignment,
                                 cell_font, cell_alignment, thin_border,
-                                info_lines=None, info_font=None, info_alignment=None):
+                                info_lines=None, info_font=None, info_alignment=None, start_row=1):
     """Write parsed table rows to an XLSX worksheet
     
     Args:

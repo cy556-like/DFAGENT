@@ -2474,6 +2474,42 @@ html { scroll-behavior: smooth; }
 }
 .export-dropdown button:hover { background: var(--bg-secondary); }
 
+/* ===== Skills Dropdown ===== */
+.skills-wrapper { position: relative; display: inline-block; }
+.skills-dropdown {
+    display: none;
+    position: absolute;
+    top: 100%;
+    left: 0;
+    margin-top: 4px;
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    box-shadow: var(--shadow-md);
+    z-index: 50;
+    min-width: 240px;
+    overflow: hidden;
+}
+.skills-dropdown.show { display: block; }
+.skills-dropdown button {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 10px 14px;
+    border: none;
+    background: transparent;
+    color: var(--text-primary);
+    font-size: 13px;
+    cursor: pointer;
+    transition: background 0.15s;
+    text-align: left;
+}
+.skills-dropdown button:hover { background: var(--bg-secondary); }
+[data-theme="dark"] .skills-dropdown { background: #262626; border-color: #3a3a3a; }
+[data-theme="dark"] .skills-dropdown button { color: #ececec; }
+[data-theme="dark"] .skills-dropdown button:hover { background: #3a3a3a; }
+
 /* (Stats Panel removed — replaced by KB panel) */
 
 /* ===== Knowledge Base Panel (header) ===== */

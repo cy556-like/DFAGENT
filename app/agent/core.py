@@ -274,7 +274,7 @@ def create_llm(deep_think: bool = False, fast_mode: bool = False, model_override
     elif deep_think:
         max_tokens = 16384  # 深度思考需要充足输出空间
     else:
-        max_tokens = 8192   # 正常 Agent 模式（DFMEA等复杂任务需要足够空间）
+        max_tokens = 16384  # Agent模式（8D/DFMEA复杂报告，原8192）
     
     # [性能优化] request_timeout 分档：
     # - 短回复 45s（足够且不会让用户等太久）

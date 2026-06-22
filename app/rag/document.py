@@ -3207,16 +3207,85 @@ def export_document_as_xlsx(content: str, filename: str, title: str = "", sessio
         pending_info_lines = []  # non-table content to be written above the next table
         has_table = False
         cursor_row = 1  # 下一段内容写入的起始行号
-        
-        for line in lines:
+
+        # 预处理：为每一行计算"是否像表格行"，用于支持无外层 | 的伪表格（如 "项目|内容"）
+        # 判定规则：
+        #   (a) 标准 markdown 表格：行首是 | 且中间还有 |
+        #   (b) 伪表格：行首不是 |，但中间含 |，且至少 2 列非空，且下一非空行也符合 (a) 或 (b)，或当前已在表格中
+        # 这样能避免把含 | 的普通句子误识别为表格
+        def _is_table_row(s: str) -> bool:
+            if not s:
+                return False
+            if s.startswith('|') and '|' in s[1:]:
+                return True
+            # 伪表格：中间含 | 且切分后至少 2 个非空列
+            if '|' in s and not s.startswith('|'):
+                cells = [c.strip() for c in s.split('|')]
+                non_empty = [c for c in cells if c]
+                if len(non_empty) >= 2:
+                    return True
+            return False
+
+        def _is_separator_row(s: str) -> bool:
+            """识别 markdown 分隔行 |---|---| 或 :---:|:---:"""
+            if not s:
+                return False
+            cells = [c.strip() for c in s.strip('|').split('|')]
+            return all(re.match(r'^:?-+:?$', c.strip()) for c in cells if c.strip()) and any(c.strip() for c in cells)
+
+        # 先扫一遍，标记每行的"表格行"属性（考虑上下文：单行伪表格需下一非空行也是表格行才算）
+        n_lines = len(lines)
+        is_table_flags = [False] * n_lines
+        i = 0
+        while i < n_lines:
+            stripped_i = lines[i].strip()
+            if _is_separator_row(stripped_i):
+                # 分隔行本身就是表格的一部分
+                is_table_flags[i] = True
+                i += 1
+                continue
+            if _is_table_row(stripped_i):
+                # 标准表格行直接通过；伪表格行需要"下一非空行也是表格行/分隔行"或"上一行已是表格"
+                if stripped_i.startswith('|'):
+                    is_table_flags[i] = True
+                else:
+                    # 找下一个非空行
+                    j = i + 1
+                    next_non_empty = ''
+                    while j < n_lines:
+                        if lines[j].strip():
+                            next_non_empty = lines[j].strip()
+                            break
+                        j += 1
+                    # 上一行（跳过空行）是否已是表格
+                    k = i - 1
+                    prev_is_table = False
+                    while k >= 0:
+                        if lines[k].strip():
+                            prev_is_table = is_table_flags[k]
+                            break
+                        k -= 1
+                    if prev_is_table or _is_table_row(next_non_empty) or _is_separator_row(next_non_empty):
+                        is_table_flags[i] = True
+                    else:
+                        is_table_flags[i] = False
+            else:
+                is_table_flags[i] = False
+            i += 1
+
+        for idx, line in enumerate(lines):
             stripped = line.strip()
-            
-            # Detect Markdown table row
-            if stripped.startswith('|') and '|' in stripped[1:]:
-                cells = [c.strip() for c in stripped.strip('|').split('|')]
-                # Skip separator row |---|---|
-                if all(re.match(r'^:?-+:?$', c.strip()) for c in cells if c.strip()):
+
+            # Detect Markdown table row (标准 + 伪表格)
+            if is_table_flags[idx]:
+                # 跳过分隔行
+                if _is_separator_row(stripped):
                     continue
+                # 解析单元格：标准表格先 strip('|')，伪表格直接 split
+                if stripped.startswith('|'):
+                    cells = [c.strip() for c in stripped.strip('|').split('|')]
+                else:
+                    cells = [c.strip() for c in stripped.split('|')]
                 current_rows.append(cells)
                 has_table = True
             else:

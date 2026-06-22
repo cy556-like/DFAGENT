@@ -3221,7 +3221,7 @@ def export_document_as_xlsx(content: str, filename: str, title: str = "", sessio
                 # flush the current table to a sheet
                 if current_rows:
                     current_row = _write_rows_to_xlsx_sheet(
-                        wb, current_rows, sheet_index, current_sheet_name,
+                        wb, current_rows, 0, current_sheet_name,
                         header_font, header_fill, header_alignment, 
                         cell_font, cell_alignment, thin_border,
                         info_lines=pending_info_lines, info_font=info_font, info_alignment=info_alignment
@@ -3245,7 +3245,7 @@ def export_document_as_xlsx(content: str, filename: str, title: str = "", sessio
         # Flush remaining table rows
         if current_rows:
             current_row = _write_rows_to_xlsx_sheet(
-                wb, current_rows, sheet_index, current_sheet_name,
+                wb, current_rows, 0, current_sheet_name,
                 header_font, header_fill, header_alignment,
                 cell_font, cell_alignment, thin_border,
                 info_lines=pending_info_lines, info_font=info_font, info_alignment=info_alignment

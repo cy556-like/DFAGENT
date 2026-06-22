@@ -2418,6 +2418,7 @@ async function sendMessage() {
         formData.append('session_id', currentChatId);
         formData.append('web_search', webSearchEnabled);
         formData.append('mode', currentMode);
+formData.append('skill', selectedSkill || '');
         formData.append('deep_think', deepThinkEnabled);
         if (currentAgentId) {
             formData.append('agent_id', currentAgentId);
@@ -2530,7 +2531,8 @@ async function regenerateMessage(btn) {
     await streamChat('/api/v1/chat/stream', {
         method: 'POST',
         headers: apiHeaders(),
-        body: JSON.stringify({ message: userText, session_id: currentChatId, web_search: webSearchEnabled, mode: currentMode, deep_think: deepThinkEnabled, agent_id: currentAgentId || '', agent_task: (currentAgentId && myAgents.find(a => a.id === currentAgentId)) ? myAgents.find(a => a.id === currentAgentId).task : '' })
+        body: JSON.stringify({ message: userText, session_id: currentChatId, web_search: webSearchEnabled, mode: currentMode, deep_think: deepThinkEnabled,
+        skill: selectedSkill || '', agent_id: currentAgentId || '', agent_task: (currentAgentId && myAgents.find(a => a.id === currentAgentId)) ? myAgents.find(a => a.id === currentAgentId).task : '' })
     }, bubble);
     } finally {
         resetStreamingUI();

@@ -169,6 +169,98 @@ def _inject_current_date(system_prompt: str) -> str:
     date_text = f"\n\n[当前日期：{now.strftime('%Y年%m月%d日')}，星期{['一','二','三','四','五','六','日'][now.weekday()]}。请在回答中涉及时间信息时使用正确的当前日期，严禁编造日期。]"
     return system_prompt + date_text
 
+def _load_8d_skill_context(skill: str, user_input: str) -> str:
+    """加载 8D skill 的完整工作流上下文（SKILL.md + 匹配到的 template.json）。
+
+    当用户在前端点击 8D Skill 按钮后，selectedSkill='8d-skill' 会被透传到此处。
+    本函数：
+      1. 读取 skills/8d-skill/SKILL.md 全文（约 264 行）
+      2. 从 user_input 提取关键字，按模板匹配规则选择模板 slug
+         (paint-defect / assembly-defect / welding-defect / dimensional-defect / generic-defect)
+      3. 读取 skills/8d-skill/templates/<slug>/template.json
+      4. 拼成上下文文本返回，用于追加到 system_prompt 末尾
+
+    任何异常都返回空字符串，确保不阻断主对话流程。
+    """
+    if not skill or skill != "8d-skill":
+        return ""
+
+    try:
+        import os
+        import json
+        import logging
+        logger_ = logging.getLogger(__name__)
+
+        # 定位 skills 目录（相对于本文件 app/agent/core.py）
+        # app/agent/core.py -> 上两级 = app/ -> 再上一级 = 项目根
+        project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        skill_md_path = os.path.join(project_root, "skills", "8d-skill", "SKILL.md")
+        templates_dir = os.path.join(project_root, "skills", "8d-skill", "templates")
+
+        if not os.path.isfile(skill_md_path):
+            logger_.warning(f"8D skill SKILL.md not found at {skill_md_path}")
+            return ""
+
+        with io.open(skill_md_path, "r", encoding="utf-8") as f:
+            skill_md_content = f.read()
+
+        # ---------- 模板匹配 ----------
+        # 规则：先按缺陷描述匹配，再按产品类别复核
+        # 关键字 → 模板 slug 映射
+        TEMPLATE_RULES = [
+            (["漆面", "涂装", "颗粒", "流挂", "色差", "橘皮", "缩孔"], "paint-defect"),
+            (["装配", "间隙", "面差", "卡扣", "异响", "松动"], "assembly-defect"),
+            (["焊接", "虚焊", "焊穿", "焊渣", "焊点", "强度"], "welding-defect"),
+            (["尺寸", "超差", "CPK", "cpk", "公差", "变形", "收缩"], "dimensional-defect"),
+        ]
+
+        matched_slug = None
+        for keywords, slug in TEMPLATE_RULES:
+            if any(kw in user_input for kw in keywords):
+                matched_slug = slug
+                break
+        if matched_slug is None:
+            matched_slug = "generic-defect"
+
+        template_path = os.path.join(templates_dir, matched_slug, "template.json")
+        if not os.path.isfile(template_path):
+            logger_.warning(f"8D template.json not found at {template_path}")
+            # 退而求其次：只注入 SKILL.md
+            return (
+                "\n\n## 🔧 8D Skill 完整工作流（已加载 SKILL.md）\n\n"
+                + skill_md_content
+                + "\n\n## ⚠️ 模板未找到\n"
+                + f"未找到模板 {matched_slug} 的 template.json，请按 SKILL.md 通用流程执行 8D 报告。\n"
+            )
+
+        with io.open(template_path, "r", encoding="utf-8") as f:
+            template_json = json.load(f)
+
+        template_str = json.dumps(template_json, ensure_ascii=False, indent=2)
+
+        # ---------- 拼上下文 ----------
+        context = (
+            "\n\n## 🔧 8D Skill 完整工作流（已加载 SKILL.md + 匹配模板）\n\n"
+            f"### 已匹配模板：{matched_slug}\n"
+            f"\n### SKILL.md 完整内容\n\n{skill_md_content}\n\n"
+            f"### 匹配模板 template.json（请直接使用预填的 5Why 路径、6M 排查项、CA 措施、Yokoten，不要凭经验编造）\n\n```json\n{template_str}\n```\n\n"
+            "### 执行要求\n"
+            "1. 严格按 SKILL.md 中的「五、工作流」执行，禁止跳过任何一步\n"
+            "2. 5Why 路径必须使用 template.json 中 d4_template.5why_path.steps 的预填答案（可基于用户实际信息微调，但不得凭空编造）\n"
+            "3. 6M 排查必须使用 template.json 中 d4_template.6m_analysis 的预填项（含 finding 和 judgment）\n"
+            "4. CA 措施必须使用 template.json 中 d5_d6_template.permanent_actions 的预填项\n"
+            "5. Yokoten 必须使用 template.json 中 d7_template.yokoten 的预填项\n"
+            "6. 输出 D0-D8 完整 8 步内容到对话，最后调用 export_xlsx_tool + export_document_tool 生成文件\n"
+        )
+        logger_.info(f"8D skill context loaded: SKILL.md ({len(skill_md_content)} chars) + template {matched_slug} ({len(template_str)} chars)")
+        return context
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).exception(f"Failed to load 8D skill context: {e}")
+        return ""
+
+
+
 
 def _get_date_message() -> HumanMessage:
     """已废弃：日期信息现在通过 _inject_current_date() 注入 system prompt 尾部。
@@ -741,7 +833,7 @@ def get_agent_with_prompt(custom_system_prompt: str, web_search: bool = False):
     
     return compiled
 
-def chat(user_input: str, session_id: str = "default", web_search: bool = False, mode: str = "agent", deep_think: bool = False, agent_id: str = None, agent_task: str = None) -> str:
+def chat(user_input: str, session_id: str = "default", web_search: bool = False, mode: str = "agent", deep_think: bool = False, agent_id: str = None, agent_task: str = None, skill: str = None) -> str:
     """非流式对话（保留兼容）"""
     set_current_agent_id(agent_id)
     set_current_session_id(session_id)
@@ -753,6 +845,11 @@ def chat(user_input: str, session_id: str = "default", web_search: bool = False,
         custom_prompt = _inject_current_date(SYSTEM_PROMPT_WITH_WEB_SEARCH)
     else:
         custom_prompt = _inject_current_date(SYSTEM_PROMPT)
+    # [方案B] 8D skill 注入：把 SKILL.md + 匹配模板追加到 system prompt 末尾
+    if skill:
+        skill_ctx = _load_8d_skill_context(skill, user_input)
+        if skill_ctx:
+            custom_prompt = custom_prompt + skill_ctx
     
     if mode == "chat":
         llm = create_llm(deep_think=deep_think)
@@ -818,7 +915,7 @@ def _extract_content(chunk) -> str:
 # 超过此时间强制结束，避免 LLM API 挂起导致服务器无响应需 Ctrl+C
 AGENT_STREAM_TIMEOUT = 180  # 3分钟
 
-async def chat_stream_generator(user_input: str, session_id: str = "default", web_search: bool = False, mode: str = "agent", deep_think: bool = False, agent_id: str = None, agent_task: str = None) -> AsyncGenerator[dict, None]:
+async def chat_stream_generator(user_input: str, session_id: str = "default", web_search: bool = False, mode: str = "agent", deep_think: bool = False, agent_id: str = None, agent_task: str = None, skill: str = None) -> AsyncGenerator[dict, None]:
     """流式对话：逐token输出，同时显示工具调用进度
     
     性能优化：
@@ -845,7 +942,7 @@ async def chat_stream_generator(user_input: str, session_id: str = "default", we
         mode = "chat"
     
     if mode == "chat":
-        async for chunk in _chat_mode_stream(user_input, session_id, deep_think=deep_think, web_search=web_search, agent_id=agent_id, agent_task=agent_task):
+        async for chunk in _chat_mode_stream(user_input, session_id, deep_think=deep_think, web_search=web_search, agent_id=agent_id, agent_task=agent_task, skill=skill):
             yield chunk
         _cleanup_session_cancel(session_id)  # [v6] 正常结束清理
         return
@@ -853,9 +950,17 @@ async def chat_stream_generator(user_input: str, session_id: str = "default", we
     # Agent模式：走Agent工具调用
     if agent_task:
         custom_system_prompt = _inject_current_date(_build_agent_prompt(agent_task, web_search=web_search, agent_id=agent_id))
+    else:
+        custom_system_prompt = _inject_current_date(SYSTEM_PROMPT_WITH_WEB_SEARCH if web_search else SYSTEM_PROMPT)
+    # [方案B] 8D skill 注入
+    if skill:
+        skill_ctx = _load_8d_skill_context(skill, user_input)
+        if skill_ctx:
+            custom_system_prompt = custom_system_prompt + skill_ctx
+    if agent_task:
         agent = get_agent_with_prompt(custom_system_prompt, web_search=web_search)
     else:
-        agent = get_agent(web_search=web_search)
+        agent = get_agent_with_prompt(custom_system_prompt, web_search=web_search)
     history = get_session_history(session_id)
     recent_messages = history.messages[-MAX_HISTORY_MESSAGES:]
     all_messages = recent_messages + [HumanMessage(content=user_input)]
@@ -1011,7 +1116,7 @@ async def chat_stream_generator(user_input: str, session_id: str = "default", we
     yield {"type": "done"}
     _cleanup_session_cancel(session_id)  # [v6] 正常结束清理
 
-async def _chat_mode_stream(user_input: str, session_id: str = "default", deep_think: bool = False, web_search: bool = False, agent_id: str = None, agent_task: str = None) -> AsyncGenerator[dict, None]:
+async def _chat_mode_stream(user_input: str, session_id: str = "default", deep_think: bool = False, web_search: bool = False, agent_id: str = None, agent_task: str = None, skill: str = None) -> AsyncGenerator[dict, None]:
     """Chat模式：直接LLM流式对话，不经过Agent工具调用，可选联网搜索
     
     性能优化：Chat模式跳过了Agent的 Think→Act→Observe 循环，
@@ -1020,6 +1125,11 @@ async def _chat_mode_stream(user_input: str, session_id: str = "default", deep_t
     set_current_agent_id(agent_id)
     set_current_session_id(session_id)
     chat_system_prompt = _inject_current_date(_build_chat_prompt(agent_task) if agent_task else CHAT_SYSTEM_PROMPT)
+    # [方案B] 8D skill 注入
+    if skill:
+        skill_ctx = _load_8d_skill_context(skill, user_input)
+        if skill_ctx:
+            chat_system_prompt = chat_system_prompt + skill_ctx
     # [质量修复] 不再因简单问题降级模型（fast_mode 会切换到更弱的模型）
     # 保留 short_response 仅调整 max_tokens，但用户选择的模型不再被替换
     is_simple = _is_simple_query(user_input)
@@ -1077,7 +1187,7 @@ async def _chat_mode_stream(user_input: str, session_id: str = "default", deep_t
 
     yield {"type": "done"}
 
-async def chat_stream_generator_multimodal(multimodal_content: list, session_id: str = "default", agent_id: str = None, agent_task: str = None) -> AsyncGenerator[dict, None]:
+async def chat_stream_generator_multimodal(multimodal_content: list, session_id: str = "default", agent_id: str = None, agent_task: str = None, skill: str = None) -> AsyncGenerator[dict, None]:
     """多模态流式对话：支持图片+文本的混合消息"""
     set_current_agent_id(agent_id)
     set_current_session_id(session_id)
@@ -1100,6 +1210,15 @@ async def chat_stream_generator_multimodal(multimodal_content: list, session_id:
     system_prompt = _inject_current_date(SYSTEM_PROMPT)
     if agent_task:
         system_prompt = _inject_current_date(f"{SYSTEM_PROMPT}\n\n## 你的专属任务\n{agent_task}\n\n请优先围绕上述任务回答用户问题，并在需要时调用相关工具搜索知识库。")
+    # [方案B] 8D skill 注入（multimodal 路径）：从 multimodal_content 提取文本作为 user_input 用于模板匹配
+    if skill:
+        try:
+            mm_text = " ".join([p.get("text", "") for p in multimodal_content if isinstance(p, dict)])
+        except Exception:
+            mm_text = ""
+        skill_ctx = _load_8d_skill_context(skill, mm_text)
+        if skill_ctx:
+            system_prompt = system_prompt + skill_ctx
 
     full_response = ""
 

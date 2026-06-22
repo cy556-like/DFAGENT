@@ -367,6 +367,7 @@ class ChatRequest(BaseModel):
     agent_id: str = None  # 智能体ID，用于知识库隔离
 
     agent_task: str = None  # 智能体任务描述，用于动态系统提示词
+    skill: str = None  # [方案B] 前端选择的技能ID（如 8d-skill），用于注入 SKILL.md + 模板
 
 
 
@@ -747,7 +748,7 @@ async def chat_api(req: ChatRequest, username: str = Depends(get_current_user)):
 
         # 必须用 asyncio.to_thread 放到线程池，否则阻塞整个事件循环导致所有请求卡死
 
-        response = await asyncio.to_thread(chat, req.message, req.session_id, web_search=req.web_search, mode=req.mode, deep_think=req.deep_think, agent_id=req.agent_id, agent_task=req.agent_task)
+        response = await asyncio.to_thread(chat, req.message, req.session_id, web_search=req.web_search, mode=req.mode, deep_think=req.deep_think, agent_id=req.agent_id, agent_task=req.agent_task, skill=req.skill)
 
         # 更新会话时间
 
@@ -813,7 +814,7 @@ async def chat_stream_api(req: ChatRequest, request: Request, username: str = De
 
 
 
-    generator_factory = lambda: chat_stream_generator(req.message, req.session_id, web_search=req.web_search, mode=req.mode, deep_think=req.deep_think, agent_id=req.agent_id, agent_task=req.agent_task)
+    generator_factory = lambda: chat_stream_generator(req.message, req.session_id, web_search=req.web_search, mode=req.mode, deep_think=req.deep_think, agent_id=req.agent_id, agent_task=req.agent_task, skill=req.skill)
 
 
 
@@ -860,6 +861,8 @@ async def chat_with_file_stream(
     agent_id: str = Form(None),
 
     agent_task: str = Form(None),
+
+    skill: str = Form(""),  # [方案B] 前端选择的技能ID（如 8d-skill）
 
     store_to_kb: str = Form("true"),
 
@@ -951,7 +954,7 @@ async def chat_with_file_stream(
 
             _sse_stream_wrapper(
 
-                lambda: chat_stream_generator_multimodal(multimodal_content, session_id, agent_id=agent_id, agent_task=agent_task),
+                lambda: chat_stream_generator_multimodal(multimodal_content, session_id, agent_id=agent_id, agent_task=agent_task, skill=skill or None),
 
                 request, session_id, start, endpoint="/chat-with-file/stream"
 
@@ -1089,7 +1092,7 @@ async def chat_with_file_stream(
 
         _sse_stream_wrapper(
 
-            lambda: chat_stream_generator(full_message_local, session_id, web_search=web_search, mode=mode, deep_think=deep_think, agent_id=aid_local, agent_task=atask_local),
+            lambda: chat_stream_generator(full_message_local, session_id, web_search=web_search, mode=mode, deep_think=deep_think, agent_id=aid_local, agent_task=atask_local, skill=skill or None),
 
             request, session_id, start, endpoint="/chat-with-file/stream"
 

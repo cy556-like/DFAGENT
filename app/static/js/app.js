@@ -2787,7 +2787,7 @@ function clearSkill() {
 function showDevSkillToast(skillName) {
     const dropdown = document.getElementById('skillsDropdown');
     if (dropdown) dropdown.classList.remove('show');
-    showToast('「' + skillName + '」技能正在开发中，敬请期待', 3500);
+    showToast('「' + skillName + '」 Skill需要公司资深专家参与，敬请期待', 3500);
 }
 
 async function exportChat(format) {

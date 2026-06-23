@@ -16,10 +16,16 @@
         --product "前保险杠总成（涂装件）" \\
         --defect "漆面颗粒/杂质" \\
         --customer "XX汽车有限公司" \\
-        --defect-rate "11.5%" \\
-        --batch-size "500" \\
+        --defect-rate "500PPM" \\
+        --batch-size "15" \\
         --template paint-defect \\
         --output-dir ~/Desktop
+
+⚠️ 行业常识基准（详见 SKILL.md 第十章）：
+    - defect-rate 默认示例用 500 PPM (0.05%)，安全件用 50 PPM；
+      严禁使用 3% / 5% / 8% / 11.5% 等灾难级数字作为示例。
+    - batch-size 字段语义为「本次 8D 分析的客户投诉/退货样本件数」，
+      典型 1–30 件；不是生产批量，严禁使用 500 / 2000 等数字作为示例。
 """
 
 import argparse
